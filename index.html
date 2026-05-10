@@ -259,12 +259,69 @@
   }
 
   main {
-    display: grid; grid-template-columns: 280px 1fr;
-    overflow: hidden; min-height: 0;
+    display: grid; grid-template-columns: var(--sidebar-w, 280px) 6px 1fr;
+    overflow: hidden; min-height: 0; position: relative;
   }
+  [data-sidebar="collapsed"] main {
+    grid-template-columns: 1fr;
+  }
+  [data-sidebar="collapsed"] .sidebar,
+  [data-sidebar="collapsed"] .resizer { display: none; }
+  .resizer {
+    cursor: col-resize; background: transparent; position: relative;
+    transition: background 0.15s;
+  }
+  .resizer::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 1px; background: var(--border); transform: translateX(-50%);
+  }
+  .resizer:hover, .resizer.dragging { background: var(--accent); }
+  .resizer:hover::before, .resizer.dragging::before { background: var(--accent); }
+  body.resizing { cursor: col-resize; user-select: none; }
+  body.resizing * { user-select: none !important; }
+
+  /* 折叠态在画布左缘显示的小展开按钮 */
+  .sidebar-peek {
+    display: none;
+    position: absolute; left: 0; top: 50%; z-index: 50;
+    transform: translateY(-50%);
+    width: 22px; height: 56px; padding: 0;
+    border: 1px solid var(--border); border-left: none;
+    border-radius: 0 6px 6px 0;
+    background: var(--panel); color: var(--text);
+    font-size: 14px; font-weight: 600; line-height: 1; cursor: pointer;
+    box-shadow: 2px 0 6px var(--shadow);
+    align-items: center; justify-content: center;
+    transition: background 0.15s, color 0.15s, transform 0.15s;
+  }
+  .sidebar-peek:hover { background: var(--accent); color: #0d1117; transform: translateY(-50%) translateX(2px); }
+  [data-theme="light"] .sidebar-peek:hover { color: #fff; }
+  [data-sidebar="collapsed"] .sidebar-peek { display: inline-flex; }
+
+  /* 展开态：折叠按钮吸附在 resizer 中部 */
+  .resizer-collapse {
+    position: absolute; left: 50%; top: 50%; z-index: 50;
+    transform: translate(-50%, -50%);
+    width: 18px; height: 56px; padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel); color: var(--text);
+    font-size: 14px; font-weight: 600; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 4px var(--shadow);
+    opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+  }
+  .resizer:hover .resizer-collapse,
+  .resizer-collapse:hover,
+  .resizer-collapse:focus { opacity: 1; }
+  .resizer-collapse:hover { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+  [data-theme="light"] .resizer-collapse:hover { color: #fff; }
+  [data-sidebar="collapsed"] .resizer-collapse { display: none; }
+
   .sidebar {
     border-right: 1px solid var(--border); background: var(--panel);
     overflow-y: auto; display: flex; flex-direction: column;
+    min-width: 0;
   }
   .sidebar h3 {
     margin: 0; padding: 12px 16px; font-size: 12px;
@@ -719,15 +776,19 @@
   </div>
 
   <main>
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <h3>任务列表 <span id="taskCount" style="color:var(--muted);font-weight:400">0</span></h3>
       <div class="task-list" id="taskList"></div>
       <div class="help-tip">
         快捷键：<kbd>N</kbd> 新建 · 选中后连按两次 <kbd>⌫</kbd> 删除（Mac 友好） · <kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> 撤回 · <kbd>⌘/Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>Z</kbd> 重做 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl/⌘</kbd>+滚轮 缩放 · 点击/拖动条目编辑
       </div>
     </aside>
+    <div class="resizer" id="sidebarResizer" title="拖动调整宽度，拖到最小值会自动折叠">
+      <button class="resizer-collapse" id="sidebarCollapseBtn" title="折叠任务列表" aria-label="折叠任务列表">‹</button>
+    </div>
 
     <div class="canvas-wrap" id="canvasWrap">
+      <button class="sidebar-peek" id="sidebarPeekBtn" title="展开任务列表" aria-label="展开任务列表">›</button>
       <div class="canvas-inner" id="canvasInner">
         <div class="timeline-header" id="timelineHeader"></div>
         <div id="ganttArea"></div>
@@ -997,6 +1058,99 @@ function toggleTheme() {
   applyTheme(cur === "dark" ? "light" : "dark");
   render();
 }
+
+// ============== Sidebar (collapse + resize) ==============
+const SIDEBAR_W_KEY = "gpu_board_sidebar_w";
+const SIDEBAR_COLLAPSED_KEY = "gpu_board_sidebar_collapsed";
+const SIDEBAR_MIN = 180;        // 最小宽度，低于此值自动折叠
+const SIDEBAR_DEFAULT = 280;
+const SIDEBAR_MAX = 520;
+const MOBILE_BREAKPOINT = 768;  // 手机端断点
+
+function applySidebarWidth(w) {
+  document.documentElement.style.setProperty("--sidebar-w", w + "px");
+  localStorage.setItem(SIDEBAR_W_KEY, String(w));
+}
+function setSidebarCollapsed(collapsed, persist = true) {
+  document.documentElement.setAttribute("data-sidebar", collapsed ? "collapsed" : "expanded");
+  if (persist) localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+}
+function loadSidebar() {
+  const w = parseInt(localStorage.getItem(SIDEBAR_W_KEY), 10);
+  applySidebarWidth(Number.isFinite(w) && w >= SIDEBAR_MIN ? w : SIDEBAR_DEFAULT);
+  // 手机端首次访问自动折叠
+  const stored = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+  let collapsed;
+  if (stored === null) {
+    collapsed = window.innerWidth < MOBILE_BREAKPOINT;
+  } else {
+    collapsed = stored === "1";
+  }
+  setSidebarCollapsed(collapsed, false);
+}
+function toggleSidebar() {
+  const cur = document.documentElement.getAttribute("data-sidebar") === "collapsed";
+  setSidebarCollapsed(!cur);
+  // 折叠/展开后画布宽度变化，重绘以重算时间轴尺寸
+  requestAnimationFrame(render);
+}
+function attachSidebarResizer() {
+  const handle = document.getElementById("sidebarResizer");
+  if (!handle) return;
+  let startX = 0, startW = 0, dragging = false;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    const dx = x - startX;
+    const target = startW + dx;
+    if (target < SIDEBAR_MIN - 30) {
+      // 拖到远小于最小宽度时直接折叠
+      stopDrag();
+      setSidebarCollapsed(true);
+      requestAnimationFrame(render);
+      return;
+    }
+    const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, target));
+    applySidebarWidth(w);
+  };
+  const stopDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing");
+    handle.classList.remove("dragging");
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", stopDrag);
+    window.removeEventListener("touchmove", onMove);
+    window.removeEventListener("touchend", stopDrag);
+    requestAnimationFrame(render);
+  };
+  const startDrag = (e) => {
+    dragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+    startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-w"), 10) || SIDEBAR_DEFAULT;
+    document.body.classList.add("resizing");
+    handle.classList.add("dragging");
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", stopDrag);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", stopDrag);
+    e.preventDefault();
+  };
+  handle.addEventListener("mousedown", startDrag);
+  handle.addEventListener("touchstart", startDrag, { passive: false });
+  // 折叠按钮在 resizer 内部，避免点击它时触发拖拽
+  const cBtn = document.getElementById("sidebarCollapseBtn");
+  if (cBtn) {
+    cBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    cBtn.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+  }
+  // 双击分隔条恢复默认宽度
+  handle.addEventListener("dblclick", () => {
+    applySidebarWidth(SIDEBAR_DEFAULT);
+    requestAnimationFrame(render);
+  });
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -2310,6 +2464,8 @@ function isLight(hex) {
 // ============== Wire-up ==============
 $("#addTaskBtn").addEventListener("click", () => openModal(null));
 $("#themeBtn").addEventListener("click", toggleTheme);
+$("#sidebarCollapseBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleSidebar(); });
+$("#sidebarPeekBtn").addEventListener("click", toggleSidebar);
 $("#undoBtn").addEventListener("click", undo);
 $("#redoBtn").addEventListener("click", redo);
 $("#recoBtn").addEventListener("click", recommendSlots);
@@ -2895,6 +3051,8 @@ function onDatePickerClick(e) {
 
 // ============== Init ==============
 loadTheme();
+loadSidebar();
+attachSidebarResizer();
 attachDateTimePickers();
 if (!load()) seedDemoData();
 render();
@@ -2907,6 +3065,17 @@ requestAnimationFrame(() => fitToTasks());
 tryRestoreSyncHandle();
 // auto-refresh now line every minute
 setInterval(render, 60 * 1000);
+
+// 视口跨过手机断点时自动折叠/恢复（仅当用户没显式覆盖过时尊重，但简单处理：进入小屏强制折叠）
+let _lastIsMobile = window.innerWidth < MOBILE_BREAKPOINT;
+window.addEventListener("resize", () => {
+  const isMobile = window.innerWidth < MOBILE_BREAKPOINT;
+  if (isMobile !== _lastIsMobile) {
+    _lastIsMobile = isMobile;
+    if (isMobile) setSidebarCollapsed(true, false);
+  }
+  requestAnimationFrame(render);
+});
 </script>
 </body>
 </html>
