@@ -1,0 +1,2912 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GPU 配额排期看板</title>
+<style>
+  :root, [data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1419;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+    --row-hover: #1f242c;
+    --grid: rgba(255, 255, 255, 0.04);
+    --grid-major: rgba(255, 255, 255, 0.09);
+    --shadow: rgba(0,0,0,0.5);
+    --tip-bg: #0d1117;
+    --scroll-thumb: #2a313c;
+    --scroll-thumb-hover: #3a424f;
+    --backdrop: rgba(0,0,0,0.6);
+    --chip-active: white;
+    --over-stripe: rgba(248, 81, 73, 0.35);
+  }
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --panel-2: #f0f3f7;
+    --border: #d8dee4;
+    --text: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --danger: #cf222e;
+    --row-hover: #eef1f5;
+    --grid: rgba(0, 0, 0, 0.04);
+    --grid-major: rgba(0, 0, 0, 0.09);
+    --shadow: rgba(140, 149, 159, 0.25);
+    --tip-bg: #24292f;
+    --scroll-thumb: #c8cdd3;
+    --scroll-thumb-hover: #a8aeb5;
+    --backdrop: rgba(120, 130, 145, 0.4);
+    --chip-active: #1f2328;
+    --over-stripe: rgba(207, 34, 46, 0.4);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  .app { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 100vh; }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    background: var(--panel);
+  }
+  header h1 {
+    font-size: 16px; margin: 0; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  header h1 .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ok); box-shadow: 0 0 8px var(--ok);
+  }
+  .quota-config {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel-2); padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .quota-config label { color: var(--muted); }
+  .quota-config input {
+    width: 70px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  .quota-config .stat {
+    color: var(--muted); padding-left: 10px;
+    border-left: 1px solid var(--border);
+  }
+  .quota-config .stat b { color: var(--text); margin-left: 4px; }
+
+  .toolbar {
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--panel);
+  }
+  .toolbar .group { display: flex; align-items: center; gap: 6px; }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  button, .btn {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 12px; font-size: 13px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover { background: #232a35; border-color: #3a424f; }
+  [data-theme="light"] button:hover { background: #e7ebf0; border-color: #c4cad1; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0d1117; font-weight: 600; }
+  button.primary:hover { background: #79b8ff; border-color: #79b8ff; color: #0d1117; }
+  [data-theme="light"] button.primary { background: #1f7feb; border-color: #1f7feb; color: #fff; }
+  [data-theme="light"] button.primary:hover { background: #1668c8; border-color: #1668c8; color: #fff; }
+  button.ghost { background: transparent; }
+  button.danger { color: var(--danger); }
+  button.danger:hover { background: rgba(248, 81, 73, 0.1); }
+  button#undoBtn, button#redoBtn { position: relative; }
+  button#undoBtn:disabled, button#redoBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  button#undoBtn[data-depth][data-show="1"]::after,
+  button#redoBtn[data-depth][data-show="1"]::after {
+    content: attr(data-depth);
+    position: absolute; top: -4px; right: -4px;
+    background: var(--accent); color: #fff;
+    font-size: 9px; line-height: 14px;
+    min-width: 14px; height: 14px; border-radius: 7px;
+    padding: 0 4px;
+    font-weight: 700;
+    animation: depthFadeIn 0.18s ease-out;
+  }
+  @keyframes depthFadeIn {
+    from { transform: scale(0.6); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
+  }
+  select, input[type="datetime-local"], input[type="text"], input[type="number"] {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+
+  /* ===== Custom datetime picker ===== */
+  .dt-input-wrap {
+    position: relative; display: inline-flex; align-items: stretch;
+    width: 100%;
+  }
+  .toolbar .dt-input-wrap { width: 158px; }
+  .dt-input-wrap > input.dt-input {
+    flex: 1; padding-right: 30px;
+    font-variant-numeric: tabular-nums;
+    width: 100%;
+  }
+  .dt-icon-btn {
+    position: absolute; right: 1px; top: 1px; bottom: 1px;
+    width: 28px; padding: 0; margin: 0;
+    background: transparent; border: none; border-left: 1px solid var(--border);
+    color: var(--muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 0 4px 4px 0;
+    transition: color 0.15s, background 0.15s;
+  }
+  .dt-icon-btn:hover { color: var(--accent); background: var(--row-hover); }
+  .dt-icon-btn:focus { outline: none; color: var(--accent); }
+  .dt-icon-btn svg { width: 14px; height: 14px; display: block; }
+  .dt-input-wrap.open .dt-icon-btn { color: var(--accent); }
+
+  .datepicker {
+    position: fixed; z-index: 2200;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 36px var(--shadow);
+    width: 280px; padding: 10px 12px 12px;
+    user-select: none;
+    animation: dpPop 0.14s ease-out;
+  }
+  @keyframes dpPop {
+    from { transform: translateY(-4px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+  .datepicker-head {
+    display: flex; align-items: center; gap: 4px;
+    margin-bottom: 8px;
+  }
+  .datepicker-head .nav {
+    width: 24px; height: 24px; padding: 0; flex: 0 0 24px;
+    background: transparent; border: 1px solid transparent;
+    color: var(--muted); border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .datepicker-head .nav:hover { background: var(--row-hover); color: var(--text); }
+  .datepicker-head .label {
+    flex: 1; text-align: center; font-weight: 600; font-size: 13px;
+    cursor: pointer; padding: 4px 6px; border-radius: 4px;
+  }
+  .datepicker-head .label:hover { background: var(--row-hover); }
+  .datepicker-grid {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+  }
+  .datepicker-grid .wd {
+    text-align: center; color: var(--muted); font-size: 11px;
+    padding: 4px 0;
+  }
+  .datepicker-grid .wd.we { color: var(--danger); opacity: 0.85; }
+  .datepicker-grid .day {
+    text-align: center; padding: 6px 0; font-size: 12px;
+    border-radius: 4px; cursor: pointer; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .datepicker-grid .day:hover { background: var(--row-hover); }
+  .datepicker-grid .day.dim   { color: var(--muted); opacity: 0.45; }
+  .datepicker-grid .day.today {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .datepicker-grid .day.selected {
+    background: var(--accent); color: #fff; font-weight: 600;
+  }
+  .datepicker-grid .day.selected:hover { background: var(--accent); filter: brightness(1.1); }
+  .datepicker-months, .datepicker-years {
+    display: grid; gap: 4px;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .datepicker-months .m, .datepicker-years .y {
+    text-align: center; padding: 10px 0; font-size: 12px;
+    border-radius: 4px; cursor: pointer;
+  }
+  .datepicker-months .m:hover, .datepicker-years .y:hover { background: var(--row-hover); }
+  .datepicker-months .m.selected, .datepicker-years .y.selected {
+    background: var(--accent); color: #fff; font-weight: 600;
+  }
+  .datepicker-time {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .datepicker-time .t-cell {
+    display: inline-flex; flex-direction: column; align-items: center;
+  }
+  .datepicker-time .t-arrow {
+    width: 22px; height: 18px; padding: 0; line-height: 1;
+    background: transparent; border: 1px solid transparent;
+    color: var(--muted); border-radius: 4px; cursor: pointer; font-size: 10px;
+  }
+  .datepicker-time .t-arrow:hover { background: var(--row-hover); color: var(--text); }
+  .datepicker-time .t-num {
+    width: 38px; text-align: center; padding: 4px 0;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 14px; color: var(--text);
+    font-variant-numeric: tabular-nums; font-weight: 600;
+    -moz-appearance: textfield;
+  }
+  .datepicker-time .t-num::-webkit-outer-spin-button,
+  .datepicker-time .t-num::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+  }
+  .datepicker-time .colon { color: var(--muted); font-weight: 600; }
+  .datepicker-foot {
+    display: flex; gap: 6px; margin-top: 10px;
+  }
+  .datepicker-foot button {
+    flex: 1; padding: 5px 8px; font-size: 12px;
+  }
+  .toolbar .zoom-display {
+    color: var(--muted); font-size: 12px; min-width: 70px; text-align: center;
+  }
+
+  main {
+    display: grid; grid-template-columns: 280px 1fr;
+    overflow: hidden; min-height: 0;
+  }
+  .sidebar {
+    border-right: 1px solid var(--border); background: var(--panel);
+    overflow-y: auto; display: flex; flex-direction: column;
+  }
+  .sidebar h3 {
+    margin: 0; padding: 12px 16px; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--muted); font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .task-list { flex: 1; overflow-y: auto; }
+  .task-item {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.15s;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .task-item:hover { background: var(--row-hover); }
+  .task-item.selected { background: var(--row-hover); border-left: 3px solid var(--accent); padding-left: 13px; }
+  .task-color {
+    width: 10px; height: 10px; border-radius: 3px;
+    margin-top: 4px; flex-shrink: 0;
+  }
+  .task-info { flex: 1; min-width: 0; }
+  .task-name {
+    font-weight: 500; font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .task-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .task-meta .gpu-tag {
+    display: inline-block; padding: 1px 6px;
+    background: rgba(88, 166, 255, 0.15); color: var(--accent);
+    border-radius: 3px; font-weight: 600;
+  }
+
+  .canvas-wrap {
+    overflow: auto; position: relative;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 100% 32px,
+      var(--bg);
+  }
+  .canvas-inner { position: relative; min-width: 100%; }
+
+  .timeline-header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    height: 50px;
+  }
+  .timeline-header svg { display: block; }
+
+  .gantt-row {
+    position: relative; height: 32px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .gantt-row .row-label {
+    position: sticky; left: 0; z-index: 5;
+    width: 0; /* labels rendered in sidebar instead */
+  }
+  .task-bar {
+    position: absolute; top: 4px; height: 24px;
+    border-radius: 4px; padding: 0 8px;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500;
+    cursor: grab; user-select: none;
+    box-shadow: 0 1px 3px var(--shadow);
+    overflow: hidden;
+    transition: filter 0.15s, transform 0.1s;
+  }
+  .task-bar:hover { filter: brightness(1.15); }
+  .task-bar.dragging { cursor: grabbing; opacity: 0.85; z-index: 100; }
+
+  /* Drag guide: vertical guide lines + start/end labels above the canvas */
+  .drag-guide-line {
+    position: absolute; top: 0; bottom: 0;
+    width: 0; border-left: 1px dashed var(--accent);
+    pointer-events: none; z-index: 90;
+  }
+  .drag-guide-line.start { border-color: #2ea043; }
+  .drag-guide-line.end   { border-color: #f78166; }
+  .drag-guide-label {
+    position: absolute; top: 2px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px var(--shadow);
+    pointer-events: none; z-index: 91;
+    transform: translateX(-50%);
+  }
+  .drag-guide-label.start { color: #2ea043; border-color: rgba(46,160,67,0.4); }
+  .drag-guide-label.end   { color: #f78166; border-color: rgba(247,129,102,0.4); }
+  .drag-guide-label.dur   {
+    top: 24px; color: var(--accent); border-color: rgba(88,166,255,0.4);
+  }
+  .task-bar.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent), 0 4px 14px var(--shadow);
+    z-index: 50;
+  }
+  .task-bar.selected::after {
+    content: "✓";
+    position: absolute;
+    top: -8px; right: -8px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px; line-height: 16px;
+    text-align: center;
+    font-weight: 700;
+    box-shadow: 0 1px 4px var(--shadow);
+  }
+  .task-bar.pending-delete {
+    animation: pendingPulse 0.7s ease-in-out infinite alternate;
+    outline-color: var(--danger) !important;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--danger), 0 0 18px rgba(248,81,73,0.6) !important;
+  }
+  .task-bar.pending-delete::after {
+    content: "再按一次删除";
+    width: auto; padding: 0 8px;
+    background: var(--danger);
+    border-radius: 8px;
+    top: -22px; right: 50%;
+    transform: translateX(50%);
+    white-space: nowrap;
+    font-size: 10px;
+  }
+  @keyframes pendingPulse {
+    from { filter: brightness(1.0); }
+    to   { filter: brightness(1.25); }
+  }
+  .task-bar .resize-handle {
+    position: absolute; top: 0; bottom: 0; width: 6px;
+    cursor: ew-resize;
+  }
+  .task-bar .resize-handle.left { left: 0; }
+  .task-bar .resize-handle.right { right: 0; }
+  .task-bar .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-bar .gpu { font-size: 11px; opacity: 0.85; flex-shrink: 0; }
+
+  .now-line {
+    position: absolute; top: 0; bottom: 0;
+    width: 2px; background: var(--danger);
+    pointer-events: none; z-index: 8;
+  }
+  .now-line::before {
+    content: "现在"; position: absolute; top: -22px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--danger); color: white;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; white-space: nowrap;
+  }
+
+  .footer {
+    border-top: 1px solid var(--border);
+    background: var(--panel); padding: 8px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--muted);
+  }
+  .legend { display: flex; gap: 14px; align-items: center; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .legend .swatch {
+    width: 12px; height: 12px; border-radius: 2px;
+  }
+
+  /* utilization band under gantt */
+  .util-section {
+    border-top: 2px solid var(--border);
+    background: var(--panel);
+  }
+  .util-section .util-title {
+    padding: 8px 16px 4px; font-size: 11px;
+    color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.5px; font-weight: 600;
+  }
+
+  /* Cloud sync button + popover */
+  .sync-wrap { position: relative; display: inline-block; }
+  #syncBtn { position: relative; padding-right: 22px; }
+  #syncBtn::after {
+    content: "";
+    position: absolute;
+    right: 8px; top: 50%; transform: translateY(-50%);
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); opacity: 0.6;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  #syncBtn[data-sync="ok"]::after    { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.6); opacity: 1; }
+  #syncBtn[data-sync="busy"]::after  { background: #d29922; box-shadow: 0 0 6px rgba(210,153,34,0.6); opacity: 1; animation: syncPulse 1s ease-in-out infinite; }
+  #syncBtn[data-sync="err"]::after   { background: #f85149; box-shadow: 0 0 6px rgba(248,81,73,0.7); opacity: 1; }
+  #syncBtn[data-sync="off"]::after   { background: var(--muted); opacity: 0.5; }
+  @keyframes syncPulse {
+    0%,100% { transform: translateY(-50%) scale(1);   opacity: 1;   }
+    50%     { transform: translateY(-50%) scale(0.6); opacity: 0.5; }
+  }
+  .sync-popover {
+    position: absolute;
+    top: calc(100% + 6px); right: 0;
+    min-width: 280px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px var(--shadow);
+    padding: 10px;
+    z-index: 900;
+    display: none;
+    font-size: 12px;
+  }
+  .sync-popover.show { display: block; }
+  .sync-popover .sp-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 4px; color: var(--text);
+  }
+  .sync-popover .sp-file {
+    color: var(--muted);
+    word-break: break-all;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11px;
+    padding: 6px 8px;
+    background: var(--bg);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+  .sync-popover .sp-actions {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 6px;
+  }
+  .sync-popover .sp-actions button {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .sync-popover .sp-hint {
+    color: var(--muted);
+    line-height: 1.5;
+    padding: 4px 6px 0;
+    font-size: 11px;
+  }
+  .sync-popover .sp-hint code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10.5px;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: var(--backdrop);
+    z-index: 1000; display: none; align-items: center; justify-content: center;
+    backdrop-filter: blur(2px);
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; width: 460px; max-width: 92vw;
+    box-shadow: 0 20px 60px var(--shadow);
+    animation: pop 0.18s ease-out;
+    max-height: 90vh; overflow-y: auto;
+  }
+  @keyframes pop {
+    from { transform: scale(0.96); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  .modal-header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .modal-header h2 { margin: 0; font-size: 15px; }
+  .modal-body { padding: 16px 18px; }
+  .form-row { margin-bottom: 12px; display: flex; flex-direction: column; gap: 5px; }
+  .form-row label { font-size: 12px; color: var(--muted); }
+  .form-row input { width: 100%; padding: 6px 10px; }
+  .form-row .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modal-footer {
+    padding: 12px 18px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .modal-footer .right { display: flex; gap: 8px; }
+
+  .empty-state {
+    padding: 40px 20px; text-align: center; color: var(--muted);
+    font-size: 12px;
+  }
+  .empty-state code {
+    background: var(--bg); padding: 1px 5px; border-radius: 3px;
+    color: var(--accent); font-size: 11px;
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 2000;
+    background: var(--tip-bg); border: 1px solid var(--border);
+    padding: 6px 10px; border-radius: 5px; font-size: 11px;
+    color: #fff; box-shadow: 0 2px 8px var(--shadow);
+    display: none; max-width: 240px;
+  }
+  [data-theme="light"] .tooltip { color: #fff; border-color: rgba(255,255,255,0.08); }
+  .tooltip.show { display: block; }
+  .tooltip .ttl { font-weight: 600; margin-bottom: 3px; color: #fff; }
+  .tooltip .row { color: rgba(255,255,255,0.65); }
+  .tooltip .row b { color: #fff; margin-left: 4px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+  .chip-row {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    padding: 8px 12px;
+  }
+  .color-chip {
+    width: 22px; height: 22px; border-radius: 4px;
+    cursor: pointer; border: 2px solid transparent;
+    transition: transform 0.1s;
+  }
+  .color-chip:hover { transform: scale(1.1); }
+  .color-chip.active { border-color: var(--chip-active); }
+
+  /* Warning banner inside modal */
+  .warn-banner {
+    background: rgba(248, 81, 73, 0.12);
+    border: 1px solid var(--danger);
+    border-left-width: 3px;
+    padding: 10px 12px; border-radius: 5px;
+    margin-bottom: 12px;
+    font-size: 12px; color: var(--text);
+    display: none;
+  }
+  .warn-banner.show { display: block; }
+  .warn-banner .wb-title {
+    color: var(--danger); font-weight: 600; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .warn-banner .wb-detail { color: var(--muted); line-height: 1.6; }
+  .warn-banner .wb-confirm {
+    margin-top: 8px; display: flex; align-items: center; gap: 6px;
+    cursor: pointer; user-select: none;
+  }
+  .warn-banner .wb-confirm input { width: auto; margin: 0; }
+
+  /* Recommend section */
+  .reco-box {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 10px 12px; margin-bottom: 12px;
+  }
+  .reco-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .reco-head label { color: var(--muted); font-size: 12px; }
+  .reco-head input { width: 70px; padding: 4px 8px; }
+  .reco-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+  .reco-item {
+    padding: 6px 8px; border-radius: 4px;
+    background: var(--bg); border: 1px solid var(--border);
+    cursor: pointer; font-size: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    transition: all 0.15s;
+  }
+  .reco-item:hover { border-color: var(--accent); background: var(--row-hover); }
+  .reco-item .rt { color: var(--text); }
+  .reco-item .rf { color: var(--ok); font-weight: 600; font-size: 11px; }
+  .reco-empty { color: var(--muted); font-size: 11px; padding: 6px 0; }
+
+  .help-tip {
+    color: var(--muted); font-size: 11px; padding: 6px 16px 12px;
+    line-height: 1.55;
+  }
+  .help-tip kbd {
+    background: var(--bg); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 3px;
+    padding: 0 4px; font-size: 10px; font-family: monospace;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <h1><span class="dot"></span>GPU 配额排期看板</h1>
+    <div class="quota-config">
+      <label>总卡数配额</label>
+      <input id="quotaInput" type="number" min="1" max="2048" value="64" />
+      <span class="stat">峰值占用<b id="peakUsage">0</b></span>
+      <span class="stat">峰值利用率<b id="peakUtil">0%</b></span>
+      <span class="stat">超配时段<b id="overCount">0</b></span>
+    </div>
+    <div style="flex:1"></div>
+    <button class="ghost" id="undoBtn" title="撤回上一步" disabled>↶ 撤回</button>
+    <button class="ghost" id="redoBtn" title="重做" disabled>↷ 重做</button>
+    <button class="ghost" id="themeBtn" title="切换主题">🌙 深色</button>
+    <span class="sync-wrap">
+      <button class="ghost" id="syncBtn" data-sync="off" title="云同步（绑定一个文件以自动双向同步）">☁ 同步</button>
+      <div class="sync-popover" id="syncPopover" role="menu">
+        <div class="sp-row" style="font-weight:600">
+          <span id="syncStatusIcon">⚪</span>
+          <span id="syncStatusText">未绑定文件</span>
+        </div>
+        <div class="sp-file" id="syncFileName">本地数据（未启用同步）</div>
+        <div class="sp-row" id="syncMetaRow" style="color:var(--muted);font-size:11px;display:none">
+          <span id="syncLastTime">上次同步：—</span>
+        </div>
+        <div class="sp-actions">
+          <button class="primary" id="syncBindBtn">绑定文件…</button>
+          <button id="syncCreateBtn">新建文件…</button>
+          <button id="syncPullBtn" disabled>立即拉取</button>
+          <button id="syncPushBtn" disabled>立即推送</button>
+          <button class="ghost danger" id="syncUnbindBtn" disabled>解绑</button>
+        </div>
+        <div class="sp-hint">
+          把文件放在 <code>iCloud Drive</code> / <code>OneDrive</code> / <code>Dropbox</code> 等云盘目录，借助系统自动同步即可在多设备间共享。<br/>
+          数据写入后会去抖 1.5s 自动推送；窗口重新获得焦点时会自动拉取并按时间戳合并。<br/>
+          <span id="syncCompatHint" style="color:var(--danger);display:none">当前浏览器不支持文件句柄持久化（请用 Chrome / Edge / Brave）。</span>
+        </div>
+      </div>
+    </span>
+    <button class="ghost" id="exportBtn" title="导出 JSON">导出</button>
+    <button class="ghost" id="importBtn" title="导入 JSON">导入</button>
+    <input id="importFile" type="file" accept="application/json" style="display:none" />
+    <button class="ghost danger" id="clearBtn">清空</button>
+  </header>
+
+  <div class="toolbar">
+    <button class="primary" id="addTaskBtn">＋ 新建任务</button>
+    <div class="sep"></div>
+    <div class="group">
+      <label style="color:var(--muted)">视图</label>
+      <select id="viewMode">
+        <option value="hour">小时</option>
+        <option value="day" selected>日</option>
+        <option value="week">周</option>
+      </select>
+    </div>
+    <div class="group">
+      <button id="zoomOut">－</button>
+      <span class="zoom-display" id="zoomLabel">1.0×</span>
+      <button id="zoomIn">＋</button>
+    </div>
+    <div class="sep"></div>
+    <button id="todayBtn">回到当前</button>
+    <button id="fitBtn">适应任务</button>
+    <div class="sep"></div>
+    <div class="group">
+      <label style="color:var(--muted)">范围起</label>
+      <input type="text" class="dt-input" id="rangeStart" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
+      <label style="color:var(--muted)">至</label>
+      <input type="text" class="dt-input" id="rangeEnd" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
+    </div>
+  </div>
+
+  <main>
+    <aside class="sidebar">
+      <h3>任务列表 <span id="taskCount" style="color:var(--muted);font-weight:400">0</span></h3>
+      <div class="task-list" id="taskList"></div>
+      <div class="help-tip">
+        快捷键：<kbd>N</kbd> 新建 · 选中后连按两次 <kbd>⌫</kbd> 删除（Mac 友好） · <kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> 撤回 · <kbd>⌘/Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>Z</kbd> 重做 · <kbd>Esc</kbd> 取消 · <kbd>Ctrl/⌘</kbd>+滚轮 缩放 · 点击/拖动条目编辑
+      </div>
+    </aside>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="canvas-inner" id="canvasInner">
+        <div class="timeline-header" id="timelineHeader"></div>
+        <div id="ganttArea"></div>
+        <div class="util-section">
+          <div class="util-title">空闲卡数热力（绿=充裕，红=紧张/超配）</div>
+          <div id="utilArea"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="footer">
+    <div class="legend">
+      <span><span class="swatch" style="background:#3fb950"></span>充裕</span>
+      <span><span class="swatch" style="background:#d29922"></span>紧张 (≥75%)</span>
+      <span><span class="swatch" style="background:#f85149"></span>超配额</span>
+      <span style="margin-left:14px;color:var(--muted)">提示：拖拽条体可平移；拖左右两端可改时长；双击条目编辑</span>
+    </div>
+    <div id="statusText">就绪</div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">新建任务</h2>
+      <button class="ghost" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>任务名称</label>
+        <input type="text" id="fName" placeholder="例：训练任务 v3" />
+      </div>
+      <div class="form-row">
+        <label>占用卡数</label>
+        <input type="number" id="fGpus" min="1" value="8" />
+      </div>
+      <div class="form-row">
+        <label>时间</label>
+        <div class="row-2">
+          <input type="text" class="dt-input" id="fStart" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
+          <input type="text" class="dt-input" id="fEnd" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
+        </div>
+      </div>
+
+      <div class="reco-box">
+        <div class="reco-head">
+          <label>智能推荐时段</label>
+          <label style="margin-left:auto">需要时长(小时)</label>
+          <input type="number" id="recoHours" min="0.5" step="0.5" value="4" />
+          <button class="primary" id="recoBtn" style="padding:4px 10px;font-size:12px">推荐</button>
+        </div>
+        <div class="reco-list" id="recoList">
+          <div class="reco-empty">填写"占用卡数"和"需要时长"后点击推荐，自动列出最早可用时段。</div>
+        </div>
+      </div>
+
+      <div class="warn-banner" id="warnBanner">
+        <div class="wb-title">⚠ 该任务将导致超出 GPU 配额</div>
+        <div class="wb-detail" id="warnDetail"></div>
+        <label class="wb-confirm">
+          <input type="checkbox" id="warnConfirm" />
+          我已知晓超配风险，强制提交
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label>颜色</label>
+        <div class="chip-row" id="colorRow"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="danger" id="fDelete" style="display:none">删除</button>
+      <div class="right" style="margin-left:auto">
+        <button id="fCancel">取消</button>
+        <button class="primary" id="fSave">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+"use strict";
+
+// ============== State ==============
+const COLORS = [
+  "#58a6ff", "#3fb950", "#d29922", "#f85149",
+  "#bc8cff", "#39c5cf", "#ff7b72", "#a371f7",
+  "#7ee787", "#ffa657"
+];
+const STORAGE_KEY = "gpu_board_v1";
+const THEME_KEY = "gpu_board_theme";
+const HOUR_MS = 3600 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+const state = {
+  quota: 64,
+  tasks: [],          // {id,name,start,end,gpus,color}
+  selectedId: null,
+  pendingDeleteId: null, // id awaiting second-press confirmation
+  view: "day",        // hour | day | week
+  zoom: 1.0,          // 0.25 .. 4
+  rangeStart: null,   // ms
+  rangeEnd: null,
+  updatedAt: 0,       // ms epoch — bumped on every save() for cloud sync
+};
+let pendingDeleteTimer = null;
+
+// ============== Utility ==============
+const fmtDateTime = (ms) => {
+  const d = new Date(ms);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const toLocalInput = (ms) => {
+  const d = new Date(ms);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fromLocalInput = (s) => {
+  if (!s) return NaN;
+  // Accept "YYYY-MM-DD HH:mm" or "YYYY-MM-DDTHH:mm"
+  const m = String(s).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})/);
+  if (!m) return NaN;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]).getTime();
+};
+const fmtDur = (ms) => {
+  if (ms < HOUR_MS) return `${Math.round(ms / 60000)} 分钟`;
+  if (ms < DAY_MS) return `${(ms / HOUR_MS).toFixed(1)} 小时`;
+  return `${(ms / DAY_MS).toFixed(1)} 天`;
+};
+const uid = () => Math.random().toString(36).slice(2, 10);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function save(opts) {
+  // Bump timestamp on every real write so the cloud-sync layer can resolve conflicts.
+  // Pass {silent:true} for snapshots restored from a remote pull (avoid bumping).
+  if (!opts || !opts.silent) state.updatedAt = Date.now();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt
+  }));
+  if (!opts || !opts.silent) scheduleCloudPush();
+}
+
+// ============== Undo / Redo history ==============
+// History stacks store full snapshots of {quota, tasks}. Capacity = 20 each.
+// pushHistory() is called BEFORE a user action mutates state, so the snapshot
+// is the *pre-action* state. undo() pops one such snapshot and pushes the
+// current (post-action) state onto redoStack so we can roll forward again.
+// Any *new* user-initiated mutation (i.e. a fresh pushHistory not from
+// redo()) clears redoStack — by definition there is no longer a linear forward
+// path to recover.
+const HISTORY_LIMIT = 20;
+const historyStack = []; // [{label, snapshot}]  -- pre-action snapshots
+const redoStack    = []; // [{label, snapshot}]  -- forward snapshots
+let suppressRedoClear = false; // set true when pushing from undo() so we keep redoStack
+let depthHideTimer = null;
+
+function snapshotState() {
+  return JSON.parse(JSON.stringify({ quota: state.quota, tasks: state.tasks }));
+}
+function pushHistory(label) {
+  historyStack.push({ label: label || "操作", snapshot: snapshotState() });
+  if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
+  // A new user action invalidates the redo path, *unless* this push comes
+  // from inside undo()/redo() themselves.
+  if (!suppressRedoClear) redoStack.length = 0;
+  refreshUndoButton();
+}
+function undo() {
+  if (historyStack.length === 0) {
+    setStatus("没有可撤回的操作");
+    flashDepth("undo");
+    return;
+  }
+  // Save the *current* state to redoStack so we can come back.
+  const cur = { label: "(redo target)", snapshot: snapshotState() };
+  const { label, snapshot } = historyStack.pop();
+  cur.label = label; // keep the same label tied to the action
+  redoStack.push(cur);
+  if (redoStack.length > HISTORY_LIMIT) redoStack.shift();
+
+  state.quota = snapshot.quota;
+  state.tasks = snapshot.tasks;
+  if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
+  clearPendingDelete();
+  save();
+  render();
+  refreshUndoButton();
+  setStatus(`已撤回：${label}（剩余 ${historyStack.length} 步）`);
+  flashDepth("undo");
+}
+function redo() {
+  if (redoStack.length === 0) {
+    setStatus("没有可重做的操作");
+    flashDepth("redo");
+    return;
+  }
+  const { label, snapshot } = redoStack.pop();
+  // Re-push the inverse onto historyStack so a subsequent undo works.
+  suppressRedoClear = true;
+  pushHistory(label);
+  suppressRedoClear = false;
+
+  state.quota = snapshot.quota;
+  state.tasks = snapshot.tasks;
+  if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
+  clearPendingDelete();
+  save();
+  render();
+  refreshUndoButton();
+  setStatus(`已恢复：${label}（剩余 ${redoStack.length} 步）`);
+  flashDepth("redo");
+}
+
+// Show the badge with remaining steps for ~3s after the user explicitly
+// triggers undo or redo (button click or shortcut). Hidden otherwise.
+function flashDepth(which) {
+  if (depthHideTimer) { clearTimeout(depthHideTimer); depthHideTimer = null; }
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  if (undoBtn) undoBtn.dataset.show = which === "undo" ? "1" : "0";
+  if (redoBtn) redoBtn.dataset.show = which === "redo" ? "1" : "0";
+  depthHideTimer = setTimeout(() => {
+    if (undoBtn) undoBtn.dataset.show = "0";
+    if (redoBtn) redoBtn.dataset.show = "0";
+    depthHideTimer = null;
+  }, 3000);
+}
+
+function refreshUndoButton() {
+  const undoBtn = document.getElementById("undoBtn");
+  const redoBtn = document.getElementById("redoBtn");
+  if (undoBtn) {
+    undoBtn.disabled = historyStack.length === 0;
+    undoBtn.title = historyStack.length === 0
+      ? "无可撤回操作"
+      : `撤回上一步（${historyStack.length}/${HISTORY_LIMIT}）：${historyStack[historyStack.length-1].label}`;
+    undoBtn.dataset.depth = historyStack.length;
+    if (!undoBtn.dataset.show) undoBtn.dataset.show = "0";
+  }
+  if (redoBtn) {
+    redoBtn.disabled = redoStack.length === 0;
+    redoBtn.title = redoStack.length === 0
+      ? "无可重做操作"
+      : `重做下一步（${redoStack.length}/${HISTORY_LIMIT}）：${redoStack[redoStack.length-1].label}`;
+    redoBtn.dataset.depth = redoStack.length;
+    if (!redoBtn.dataset.show) redoBtn.dataset.show = "0";
+  }
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem(THEME_KEY, theme);
+  const btn = document.getElementById("themeBtn");
+  if (btn) btn.textContent = theme === "light" ? "☀ 浅色" : "🌙 深色";
+}
+function loadTheme() {
+  const t = localStorage.getItem(THEME_KEY) || "dark";
+  applyTheme(t);
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(cur === "dark" ? "light" : "dark");
+  render();
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    state.quota = data.quota ?? 64;
+    state.tasks = (data.tasks || []).map(t => ({...t}));
+    state.updatedAt = data.updatedAt || 0;
+    return true;
+  } catch(e) { return false; }
+}
+
+// ============== Cloud Sync (File System Access API) ==============
+// Concept: user picks a JSON file once; we persist its FileSystemFileHandle in
+// IndexedDB. Every save() debounces a write into that file; window focus + an
+// interval timer pull the file back and resolve by `updatedAt`. Put the file in
+// iCloud / OneDrive / Dropbox to share across devices — zero server needed.
+const SYNC_DB_NAME = "gpu_board_sync";
+const SYNC_STORE   = "handles";
+const SYNC_KEY     = "primary";
+const SYNC_DEBOUNCE_MS = 1500;
+const SYNC_POLL_MS = 30 * 1000;
+
+const sync = {
+  handle: null,
+  fileName: "",
+  lastPushAt: 0,
+  lastPullAt: 0,
+  status: "off",     // off | ok | busy | err
+  errMsg: "",
+  pushTimer: null,
+  pollTimer: null,
+};
+
+function syncSupported() {
+  return typeof window !== "undefined" && "showOpenFilePicker" in window && "indexedDB" in window;
+}
+
+function openSyncDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SYNC_DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(SYNC_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbPutHandle(handle) {
+  const db = await openSyncDB();
+  await new Promise((res, rej) => {
+    const tx = db.transaction(SYNC_STORE, "readwrite");
+    tx.objectStore(SYNC_STORE).put(handle, SYNC_KEY);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+}
+async function dbGetHandle() {
+  const db = await openSyncDB();
+  const handle = await new Promise((res, rej) => {
+    const tx = db.transaction(SYNC_STORE, "readonly");
+    const r = tx.objectStore(SYNC_STORE).get(SYNC_KEY);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
+  });
+  db.close();
+  return handle;
+}
+async function dbDelHandle() {
+  const db = await openSyncDB();
+  await new Promise((res, rej) => {
+    const tx = db.transaction(SYNC_STORE, "readwrite");
+    tx.objectStore(SYNC_STORE).delete(SYNC_KEY);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+}
+
+async function ensureRwPermission(handle) {
+  if (!handle) return false;
+  const opts = { mode: "readwrite" };
+  if ((await handle.queryPermission(opts)) === "granted") return true;
+  return (await handle.requestPermission(opts)) === "granted";
+}
+
+function setSyncStatus(s, msg) {
+  sync.status = s;
+  sync.errMsg = msg || "";
+  const btn = document.getElementById("syncBtn");
+  if (btn) btn.dataset.sync = s;
+  refreshSyncPopover();
+}
+
+function refreshSyncPopover() {
+  const has = !!sync.handle;
+  const supported = syncSupported();
+  const $get = (id) => document.getElementById(id);
+  const icon = $get("syncStatusIcon"), txt = $get("syncStatusText"), file = $get("syncFileName");
+  const meta = $get("syncMetaRow"), last = $get("syncLastTime");
+  const bind = $get("syncBindBtn"), pull = $get("syncPullBtn");
+  const push = $get("syncPushBtn"), unbind = $get("syncUnbindBtn");
+  const create = $get("syncCreateBtn");
+  const compat = $get("syncCompatHint");
+  if (!icon) return;
+  if (!supported) {
+    compat.style.display = "block";
+    bind.disabled = true;
+    if (create) create.disabled = true;
+  } else {
+    compat.style.display = "none";
+    if (create) create.disabled = false;
+  }
+  const map = { off: ["⚪","未绑定文件"], ok: ["🟢","同步正常"], busy: ["🟡","同步中…"], err: ["🔴","同步出错"] };
+  const [ic, lbl] = map[sync.status] || map.off;
+  icon.textContent = ic;
+  txt.textContent = sync.status === "err" ? `同步出错：${sync.errMsg || "未知错误"}` : lbl;
+  file.textContent = has ? sync.fileName : "本地数据（未启用同步）";
+  if (has) {
+    meta.style.display = "flex";
+    const ts = sync.lastPullAt > sync.lastPushAt ? sync.lastPullAt : sync.lastPushAt;
+    last.textContent = ts ? `上次同步：${fmtDateTime(ts)}` : "尚未同步";
+  } else {
+    meta.style.display = "none";
+  }
+  pull.disabled = !has; push.disabled = !has; unbind.disabled = !has;
+  bind.textContent = has ? "更换文件…" : "绑定文件…";
+  // Title on the header button
+  const btn = $get("syncBtn");
+  if (btn) {
+    btn.title = has
+      ? `已绑定：${sync.fileName}（${sync.status === "ok" ? "同步正常" : sync.status === "busy" ? "同步中…" : sync.status === "err" ? sync.errMsg : "等待中"}）`
+      : "云同步：绑定一个文件即可在多设备间双向同步";
+  }
+}
+
+async function bindSyncFile() {
+  if (!syncSupported()) {
+    alert("当前浏览器不支持 File System Access API，请使用 Chrome / Edge / Brave。");
+    return;
+  }
+  try {
+    setSyncStatus("busy");
+    const [handle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: [{ description: "GPU Board JSON", accept: { "application/json": [".json"] } }],
+      excludeAcceptAllOption: false,
+    });
+    if (!(await ensureRwPermission(handle))) {
+      setSyncStatus("err", "未授权写入");
+      return;
+    }
+    sync.handle = handle;
+    sync.fileName = handle.name;
+    await dbPutHandle(handle);
+    // Decide direction: prefer the one with newer updatedAt.
+    await syncMergeFromFile({ initial: true });
+    if (sync.status !== "err") {
+      setSyncStatus("ok");
+      setStatus(`已绑定同步文件：${handle.name}`);
+    }
+    startSyncPolling();
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      setSyncStatus(sync.handle ? "ok" : "off");
+      return;
+    }
+    setSyncStatus("err", err.message || String(err));
+  }
+}
+
+async function createSyncFile() {
+  if (!syncSupported() || !("showSaveFilePicker" in window)) {
+    alert("当前浏览器不支持创建同步文件，请使用 Chrome / Edge / Brave。");
+    return;
+  }
+  try {
+    setSyncStatus("busy");
+    const handle = await window.showSaveFilePicker({
+      suggestedName: `gpu-board-${new Date().toISOString().slice(0,10)}.json`,
+      types: [{ description: "GPU Board JSON", accept: { "application/json": [".json"] } }],
+    });
+    if (!(await ensureRwPermission(handle))) {
+      setSyncStatus("err", "未授权写入");
+      return;
+    }
+    sync.handle = handle;
+    sync.fileName = handle.name;
+    await dbPutHandle(handle);
+    // Always push current local snapshot into the new file.
+    const ts = state.updatedAt || Date.now();
+    state.updatedAt = ts;
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: ts });
+    sync.lastPushAt = Date.now();
+    save({ silent: true });
+    setSyncStatus("ok");
+    setStatus(`已创建同步文件：${handle.name}（已写入 ${state.tasks.length} 任务）`);
+    startSyncPolling();
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      setSyncStatus(sync.handle ? "ok" : "off");
+      return;
+    }
+    setSyncStatus("err", err.message || String(err));
+  }
+}
+
+async function unbindSyncFile() {
+  if (!sync.handle) return;
+  if (!confirm(`解除与文件「${sync.fileName}」的同步？本地数据保留。`)) return;
+  await dbDelHandle();
+  sync.handle = null;
+  sync.fileName = "";
+  sync.lastPushAt = 0;
+  sync.lastPullAt = 0;
+  stopSyncPolling();
+  setSyncStatus("off");
+  setStatus("已解绑同步文件");
+}
+
+async function readFromHandle() {
+  const file = await sync.handle.getFile();
+  const txt = await file.text();
+  if (!txt.trim()) return null;
+  return JSON.parse(txt);
+}
+
+async function writeToHandle(data) {
+  const writable = await sync.handle.createWritable();
+  await writable.write(JSON.stringify(data, null, 2));
+  await writable.close();
+}
+
+async function syncMergeFromFile(opts) {
+  if (!sync.handle) return;
+  if (!(await ensureRwPermission(sync.handle))) {
+    setSyncStatus("err", "权限被撤销");
+    return;
+  }
+  setSyncStatus("busy");
+  try {
+    let remote = null;
+    try { remote = await readFromHandle(); } catch (e) { /* empty / corrupt — treat as nothing */ }
+    const localTs = state.updatedAt || 0;
+    const remoteTs = remote && remote.updatedAt || 0;
+    if (!remote || !Array.isArray(remote.tasks)) {
+      // remote is empty/invalid — push current local snapshot
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+      sync.lastPushAt = Date.now();
+    } else if (remoteTs > localTs) {
+      // remote wins — pull
+      pushHistory(opts && opts.initial ? "首次绑定·云端覆盖本地" : "云端更新·覆盖本地");
+      state.quota = remote.quota ?? state.quota;
+      state.tasks = remote.tasks;
+      state.updatedAt = remoteTs;
+      // 'silent' so we don't bump updatedAt or re-push
+      save({ silent: true });
+      render();
+      sync.lastPullAt = Date.now();
+      setStatus(`已从云端拉取（${state.tasks.length} 任务）`);
+    } else if (localTs > remoteTs) {
+      // local wins — push
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt });
+      sync.lastPushAt = Date.now();
+    } else {
+      // same timestamp — nothing to do
+      sync.lastPullAt = Date.now();
+    }
+    setSyncStatus("ok");
+  } catch (err) {
+    setSyncStatus("err", err.message || String(err));
+  }
+}
+
+function scheduleCloudPush() {
+  if (!sync.handle) return;
+  if (sync.pushTimer) clearTimeout(sync.pushTimer);
+  setSyncStatus("busy");
+  sync.pushTimer = setTimeout(async () => {
+    sync.pushTimer = null;
+    try {
+      if (!(await ensureRwPermission(sync.handle))) {
+        setSyncStatus("err", "权限被撤销");
+        return;
+      }
+      // Last-write-wins. Read remote first to skip if it's already newer
+      // (e.g. another device just pushed) — then we'd rather pull.
+      let remote = null;
+      try { remote = await readFromHandle(); } catch (e) { /* ignore */ }
+      const remoteTs = remote && remote.updatedAt || 0;
+      if (remoteTs > state.updatedAt) {
+        await syncMergeFromFile({});
+        return;
+      }
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt });
+      sync.lastPushAt = Date.now();
+      setSyncStatus("ok");
+    } catch (err) {
+      setSyncStatus("err", err.message || String(err));
+    }
+  }, SYNC_DEBOUNCE_MS);
+}
+
+function startSyncPolling() {
+  stopSyncPolling();
+  sync.pollTimer = setInterval(() => {
+    if (document.visibilityState === "visible" && sync.handle) {
+      syncMergeFromFile({});
+    }
+  }, SYNC_POLL_MS);
+}
+function stopSyncPolling() {
+  if (sync.pollTimer) { clearInterval(sync.pollTimer); sync.pollTimer = null; }
+  if (sync.pushTimer) { clearTimeout(sync.pushTimer); sync.pushTimer = null; }
+}
+
+async function tryRestoreSyncHandle() {
+  if (!syncSupported()) { refreshSyncPopover(); return; }
+  try {
+    const handle = await dbGetHandle();
+    if (!handle) { refreshSyncPopover(); return; }
+    // Permission must be re-granted by user gesture if it was revoked.
+    const opts = { mode: "readwrite" };
+    const cur = await handle.queryPermission(opts);
+    sync.handle = handle;
+    sync.fileName = handle.name;
+    if (cur === "granted") {
+      await syncMergeFromFile({ initial: true });
+      startSyncPolling();
+    } else {
+      // We have a remembered handle but need a click to re-grant — show "需重新授权"
+      setSyncStatus("err", "需重新授权（点击同步按钮即可）");
+    }
+  } catch (err) {
+    setSyncStatus("err", err.message || String(err));
+  }
+}
+
+function seedDemoData() {
+  const now = Date.now();
+  const align = Math.floor(now / HOUR_MS) * HOUR_MS;
+  // Generic demo seed — randomized within reasonable ranges so the gantt looks
+  // alive on first load. Names are intentionally project-agnostic so the public
+  // build doesn't leak any real workload identifiers.
+  const rand = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+  const presets = [
+    "训练任务 A", "训练任务 B", "训练任务 C",
+    "推理压测", "数据预处理", "评估批跑",
+    "微调实验", "checkpoint 转换", "离线打分",
+  ];
+  const pickedNames = [...presets].sort(() => Math.random() - 0.5).slice(0, 5);
+  state.quota = 64;
+  state.tasks = pickedNames.map((name, i) => {
+    const startOffset = rand(-12, 24) * HOUR_MS;       // -12h ~ +24h from now
+    const duration    = rand(6, 30)  * HOUR_MS;        // 6h ~ 30h
+    const gpus        = [4, 8, 8, 16, 16, 24, 32][rand(0, 6)];
+    return {
+      id: uid(),
+      name,
+      start: align + startOffset,
+      end:   align + startOffset + duration,
+      gpus,
+      color: COLORS[(i + rand(0, COLORS.length - 1)) % COLORS.length],
+    };
+  });
+  save();
+}
+
+// ============== Range Computation ==============
+function computeRange() {
+  if (state.rangeStart && state.rangeEnd) return [state.rangeStart, state.rangeEnd];
+  if (state.tasks.length === 0) {
+    const now = Date.now();
+    const start = Math.floor(now / DAY_MS) * DAY_MS - DAY_MS;
+    return [start, start + 5 * DAY_MS];
+  }
+  let mn = Infinity, mx = -Infinity;
+  for (const t of state.tasks) {
+    mn = Math.min(mn, t.start);
+    mx = Math.max(mx, t.end);
+  }
+  const pad = (mx - mn) * 0.08 || HOUR_MS * 4;
+  return [mn - pad, mx + pad];
+}
+
+// pixels per ms (depending on view + zoom)
+function pxPerMs() {
+  let base; // px per ms
+  if (state.view === "hour") base = 80 / HOUR_MS;       // 80px / hour
+  else if (state.view === "day") base = 4 / HOUR_MS;    // 4px / hour = 96px / day
+  else base = 1.2 / HOUR_MS;                             // ~200px / week
+  return base * state.zoom;
+}
+
+function timeToX(ms, range) {
+  return (ms - range[0]) * pxPerMs();
+}
+function xToTime(x, range) {
+  return range[0] + x / pxPerMs();
+}
+
+// snap to a granularity based on view
+function snap(ms) {
+  let g;
+  if (state.view === "hour") g = 5 * 60 * 1000;       // 5 min
+  else if (state.view === "day") g = 30 * 60 * 1000;  // 30 min
+  else g = HOUR_MS;                                   // 1 hour
+  return Math.round(ms / g) * g;
+}
+
+// ============== Utilization computation ==============
+// Builds segments where usage is constant: [{start, end, used}]
+function buildUtilizationSegments() {
+  const events = [];
+  for (const t of state.tasks) {
+    events.push({time: t.start, delta: +t.gpus});
+    events.push({time: t.end,   delta: -t.gpus});
+  }
+  events.sort((a, b) => a.time - b.time);
+  const segs = [];
+  let used = 0, prev = null;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (prev !== null && e.time !== prev) {
+      segs.push({start: prev, end: e.time, used});
+    }
+    used += e.delta;
+    prev = e.time;
+  }
+  return segs;
+}
+
+function summarize() {
+  const segs = buildUtilizationSegments();
+  let peak = 0, overCount = 0;
+  for (const s of segs) {
+    if (s.used > peak) peak = s.used;
+    if (s.used > state.quota) overCount++;
+  }
+  return {peak, overCount, segs};
+}
+
+// Check if a candidate task (start, end, gpus) would over-quota.
+// Excludes a task by id (for editing). Returns {over, peak, overSpans:[{start,end,used}]}
+function checkOverQuota(start, end, gpus, excludeId) {
+  const others = state.tasks.filter(t => t.id !== excludeId);
+  const events = [];
+  for (const t of others) {
+    events.push({time: t.start, delta: +t.gpus});
+    events.push({time: t.end,   delta: -t.gpus});
+  }
+  events.push({time: start, delta: +gpus});
+  events.push({time: end,   delta: -gpus});
+  events.sort((a, b) => a.time - b.time);
+  let used = 0, prev = null, peak = 0;
+  const overSpans = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (prev !== null && e.time !== prev) {
+      if (used > peak) peak = used;
+      // only spans overlapping this candidate are reported
+      const a = Math.max(prev, start), b = Math.min(e.time, end);
+      if (b > a && used > state.quota) {
+        overSpans.push({start: a, end: b, used});
+      }
+    }
+    used += e.delta;
+    prev = e.time;
+  }
+  return {over: overSpans.length > 0, peak, overSpans};
+}
+
+// Suggest earliest free time-slots that fit `gpus` for `durationMs`.
+// Search window: from now to max(now+14d, latest task end + 7d). Returns up to N suggestions.
+function suggestSlots(gpus, durationMs, limit = 5) {
+  if (!gpus || !durationMs) return [];
+  const now = Date.now();
+  let latest = now + 14 * DAY_MS;
+  for (const t of state.tasks) latest = Math.max(latest, t.end + 7 * DAY_MS);
+  const horizonStart = Math.floor(now / (30 * 60 * 1000)) * (30 * 60 * 1000); // align 30min
+  const horizonEnd = latest;
+
+  // build segments from existing tasks within horizon, no candidate
+  const events = [{time: horizonStart, delta: 0}];
+  for (const t of state.tasks) {
+    events.push({time: Math.max(t.start, horizonStart), delta: +t.gpus});
+    events.push({time: Math.min(t.end, horizonEnd),   delta: -t.gpus});
+  }
+  events.push({time: horizonEnd, delta: 0});
+  events.sort((a, b) => a.time - b.time);
+
+  const segs = [];
+  let used = 0, prev = horizonStart;
+  for (const e of events) {
+    if (e.time > prev) {
+      segs.push({start: prev, end: e.time, used});
+      prev = e.time;
+    }
+    used += e.delta;
+  }
+
+  // Merge consecutive feasible segments (free >= gpus) and slide a window of durationMs
+  const slots = [];
+  let runStart = null;
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const free = state.quota - s.used;
+    if (free >= gpus) {
+      if (runStart === null) runStart = s.start;
+      const runEnd = s.end;
+      if (runEnd - runStart >= durationMs) {
+        // emit a slot at runStart
+        slots.push({start: runStart, end: runStart + durationMs, free: free});
+        // jump runStart forward to allow next non-overlapping suggestion
+        runStart = runStart + durationMs;
+        // re-evaluate this segment to keep finding more slots inside long windows
+        if (runStart < runEnd && runEnd - runStart >= durationMs) {
+          i--; continue;
+        } else if (runStart >= runEnd) {
+          runStart = null;
+        }
+      }
+    } else {
+      runStart = null;
+    }
+    if (slots.length >= limit) break;
+  }
+  return slots.slice(0, limit);
+}
+
+// ============== Rendering ==============
+const $ = (s) => document.querySelector(s);
+const ganttArea = $("#ganttArea");
+const utilArea = $("#utilArea");
+const timelineHeader = $("#timelineHeader");
+const canvasWrap = $("#canvasWrap");
+const canvasInner = $("#canvasInner");
+
+function render() {
+  const range = computeRange();
+  const totalMs = range[1] - range[0];
+  const width = Math.max(canvasWrap.clientWidth - 4, totalMs * pxPerMs());
+  canvasInner.style.width = width + "px";
+
+  renderTimeline(range, width);
+  renderGantt(range, width);
+  renderUtil(range, width);
+  renderSidebar();
+  renderStats();
+  $("#zoomLabel").textContent = state.zoom.toFixed(2) + "×";
+  $("#quotaInput").value = state.quota;
+  if (!state.rangeStart) $("#rangeStart").value = toLocalInput(range[0]);
+  if (!state.rangeEnd) $("#rangeEnd").value = toLocalInput(range[1]);
+}
+
+function renderTimeline(range, width) {
+  const [t0, t1] = range;
+  const ppms = pxPerMs();
+
+  // choose major / minor tick interval based on view + zoom
+  // Goal: minor ticks remain visually readable (~ >=44px between minors).
+  // We pick the smallest meaningful step that satisfies this.
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function getWeekNum(d) {
+    const onejan = new Date(d.getFullYear(), 0, 1);
+    return Math.ceil(((d - onejan) / DAY_MS + onejan.getDay() + 1) / 7);
+  }
+  const MIN_MINOR_PX = 44;
+  let majorMs, minorMs, fmtMajor, fmtMinor;
+  if (state.view === "hour") {
+    // hour view: minor candidates from 1 min up to 30 min
+    const cands = [1, 2, 5, 10, 15, 30].map(m => m * 60 * 1000);
+    minorMs = cands.find(c => c * ppms >= MIN_MINOR_PX) || 30 * 60 * 1000;
+    majorMs = HOUR_MS;
+    fmtMajor = (d) => `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:00`;
+    fmtMinor = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } else if (state.view === "day") {
+    // day view: adapt minor step from 30 min up to 12 h based on zoom
+    const cands = [
+      30 * 60 * 1000,
+      HOUR_MS,
+      2 * HOUR_MS,
+      3 * HOUR_MS,
+      4 * HOUR_MS,
+      6 * HOUR_MS,
+      8 * HOUR_MS,
+      12 * HOUR_MS,
+    ];
+    minorMs = cands.find(c => c * ppms >= MIN_MINOR_PX) || 12 * HOUR_MS;
+    majorMs = DAY_MS;
+    fmtMajor = (d) => `${d.getMonth()+1}月${d.getDate()}日 ${"日一二三四五六"[d.getDay()]}`;
+    // Show minutes when minor step is sub-hour
+    fmtMinor = (d) => minorMs < HOUR_MS
+      ? `${pad(d.getHours())}:${pad(d.getMinutes())}`
+      : `${pad(d.getHours())}:00`;
+  } else {
+    // week view: from 1 day up to 1 week
+    const cands = [DAY_MS, 2 * DAY_MS, 3 * DAY_MS, 7 * DAY_MS];
+    minorMs = cands.find(c => c * ppms >= MIN_MINOR_PX) || DAY_MS;
+    majorMs = 7 * DAY_MS;
+    fmtMajor = (d) => `第 ${getWeekNum(d)} 周`;
+    fmtMinor = (d) => `${pad(d.getMonth()+1)}/${pad(d.getDate())}`;
+  }
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", 50);
+  svg.style.color = "var(--text)";
+
+  // Major ticks + labels
+  const majorStart = Math.ceil(t0 / majorMs) * majorMs;
+  for (let t = majorStart; t <= t1; t += majorMs) {
+    const x = (t - t0) * ppms;
+    const ln = document.createElementNS(ns, "line");
+    ln.setAttribute("x1", x); ln.setAttribute("x2", x);
+    ln.setAttribute("y1", 26); ln.setAttribute("y2", 50);
+    ln.setAttribute("stroke", "var(--grid-major)");
+    svg.appendChild(ln);
+    const lbl = document.createElementNS(ns, "text");
+    lbl.setAttribute("x", x + 4);
+    lbl.setAttribute("y", 16);
+    lbl.setAttribute("fill", "currentColor");
+    lbl.setAttribute("font-size", "11");
+    lbl.setAttribute("font-weight", "600");
+    lbl.textContent = fmtMajor(new Date(t));
+    svg.appendChild(lbl);
+  }
+  // Minor ticks
+  const minorStart = Math.ceil(t0 / minorMs) * minorMs;
+  for (let t = minorStart; t <= t1; t += minorMs) {
+    if (t % majorMs === 0) continue;
+    const x = (t - t0) * ppms;
+    const ln = document.createElementNS(ns, "line");
+    ln.setAttribute("x1", x); ln.setAttribute("x2", x);
+    ln.setAttribute("y1", 36); ln.setAttribute("y2", 50);
+    ln.setAttribute("stroke", "var(--grid)");
+    svg.appendChild(ln);
+    if (ppms * minorMs >= MIN_MINOR_PX) {
+      const lbl = document.createElementNS(ns, "text");
+      lbl.setAttribute("x", x + 3);
+      lbl.setAttribute("y", 46);
+      lbl.setAttribute("fill", "var(--muted)");
+      lbl.setAttribute("font-size", "10");
+      lbl.textContent = fmtMinor(new Date(t));
+      svg.appendChild(lbl);
+    }
+  }
+  // baseline
+  const base = document.createElementNS(ns, "line");
+  base.setAttribute("x1", 0); base.setAttribute("x2", width);
+  base.setAttribute("y1", 50); base.setAttribute("y2", 50);
+  base.setAttribute("stroke", "var(--border)");
+  svg.appendChild(base);
+
+  timelineHeader.innerHTML = "";
+  timelineHeader.appendChild(svg);
+}
+
+function renderGantt(range, width) {
+  ganttArea.innerHTML = "";
+  ganttArea.style.position = "relative";
+
+  const sorted = [...state.tasks].sort((a, b) => a.start - b.start);
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i];
+    const row = document.createElement("div");
+    row.className = "gantt-row";
+    row.dataset.idx = i;
+
+    const x = timeToX(t.start, range);
+    const w = Math.max(timeToX(t.end, range) - x, 6);
+
+    const bar = document.createElement("div");
+    bar.className = "task-bar"
+      + (t.id === state.selectedId ? " selected" : "")
+      + (t.id === state.pendingDeleteId ? " pending-delete" : "");
+    bar.dataset.id = t.id;
+    bar.style.left = x + "px";
+    bar.style.width = w + "px";
+    bar.style.background = `linear-gradient(180deg, ${t.color} 0%, ${shade(t.color, -15)} 100%)`;
+    bar.style.color = isLight(t.color) ? "#0d1117" : "#fff";
+    bar.style.borderLeft = `3px solid ${shade(t.color, -25)}`;
+
+    bar.innerHTML = `
+      <div class="resize-handle left"></div>
+      <span class="label">${escapeHTML(t.name)}</span>
+      <span class="gpu">${t.gpus} 卡</span>
+      <div class="resize-handle right"></div>
+    `;
+
+    row.appendChild(bar);
+    ganttArea.appendChild(row);
+
+    attachBarHandlers(bar, t);
+  }
+
+  // If empty, show hint
+  if (state.tasks.length === 0) {
+    const hint = document.createElement("div");
+    hint.className = "empty-state";
+    hint.innerHTML = `还没有任务。点击左上角 <code>＋ 新建任务</code> 开始排期。`;
+    ganttArea.appendChild(hint);
+  }
+
+  // now line
+  const nowMs = Date.now();
+  if (nowMs >= range[0] && nowMs <= range[1]) {
+    const line = document.createElement("div");
+    line.className = "now-line";
+    line.style.left = timeToX(nowMs, range) + "px";
+    ganttArea.appendChild(line);
+  }
+}
+
+function renderUtil(range, width) {
+  utilArea.innerHTML = "";
+  const HEIGHT = 130;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", HEIGHT);
+  svg.style.display = "block";
+
+  // diagonal stripe pattern for over-quota
+  const defs = document.createElementNS(ns, "defs");
+  const pat = document.createElementNS(ns, "pattern");
+  pat.setAttribute("id", "overStripe");
+  pat.setAttribute("patternUnits", "userSpaceOnUse");
+  pat.setAttribute("width", "8"); pat.setAttribute("height", "8");
+  pat.setAttribute("patternTransform", "rotate(45)");
+  const pBg = document.createElementNS(ns, "rect");
+  pBg.setAttribute("width", "8"); pBg.setAttribute("height", "8");
+  pBg.setAttribute("fill", "#f85149");
+  pat.appendChild(pBg);
+  const pLn = document.createElementNS(ns, "rect");
+  pLn.setAttribute("width", "3"); pLn.setAttribute("height", "8");
+  pLn.setAttribute("fill", "#5a0a0a");
+  pat.appendChild(pLn);
+  defs.appendChild(pat);
+  svg.appendChild(defs);
+
+  const ppms = pxPerMs();
+  const segs = buildUtilizationSegments();
+  const quota = state.quota;
+  svg.style.color = "var(--text)";
+  // Dynamic Y-axis: include over-quota peak. yMax = max(quota * 1.1, peak * 1.05)
+  let peakUsed = 0;
+  for (const s of segs) {
+    const a = Math.max(s.start, range[0]);
+    const b = Math.min(s.end, range[1]);
+    if (b > a && s.used > peakUsed) peakUsed = s.used;
+  }
+  const yMax = Math.max(quota * 1.1, peakUsed * 1.05, 1);
+
+  const PAD_TOP = 18;
+  const innerH = HEIGHT - PAD_TOP - 10;
+  const baselineY = PAD_TOP + innerH;
+  const valToY = (v) => baselineY - (v / yMax) * innerH;
+  const quotaY = valToY(quota);
+
+  // gridlines: 0, quota/2, quota, yMax
+  const gridVals = [0, Math.round(quota * 0.5), quota];
+  if (yMax > quota) gridVals.push(Math.round(yMax));
+  for (const v of gridVals) {
+    const y = valToY(v);
+    const ln = document.createElementNS(ns, "line");
+    ln.setAttribute("x1", 0); ln.setAttribute("x2", width);
+    ln.setAttribute("y1", y); ln.setAttribute("y2", y);
+    ln.setAttribute("stroke", v === quota ? "rgba(248,81,73,0.25)" : "var(--grid-major)");
+    ln.setAttribute("stroke-dasharray", v === quota ? "4,3" : "");
+    svg.appendChild(ln);
+    const tx = document.createElementNS(ns, "text");
+    tx.setAttribute("x", 4); tx.setAttribute("y", y - 2);
+    tx.setAttribute("fill", v === quota ? "#f85149" : "currentColor");
+    tx.setAttribute("font-size", "10");
+    tx.style.opacity = v === quota ? "0.95" : "0.6";
+    tx.textContent = (v === quota ? "配额 " : "") + v + " 卡";
+    svg.appendChild(tx);
+  }
+
+  // each segment within range -> usage bar (split at quota line if over)
+  // small gap between adjacent bars so neighbouring colours read as separate columns
+  const BAR_GAP = 0.6;
+  for (const s of segs) {
+    const a = Math.max(s.start, range[0]);
+    const b = Math.min(s.end, range[1]);
+    if (b <= a) continue;
+    const xa = (a - range[0]) * ppms;
+    const xb = (b - range[0]) * ppms;
+    const rawW = xb - xa;
+    // Apply gap only when there's room; never let width drop below 0.5.
+    const useGap = rawW > 1.4 ? BAR_GAP : 0;
+    const drawX = xa + useGap / 2;
+    const w = Math.max(rawW - useGap, 0.5);
+    const usage = s.used;
+    const free = quota - usage;
+    const ratio = quota > 0 ? usage / quota : 0;
+
+    if (usage > 0) {
+      if (usage <= quota) {
+        // single bar from baseline up to usage
+        const yTop = valToY(usage);
+        const rect = document.createElementNS(ns, "rect");
+        rect.setAttribute("x", drawX); rect.setAttribute("y", yTop);
+        rect.setAttribute("width", w);
+        rect.setAttribute("height", baselineY - yTop);
+        rect.setAttribute("fill", utilColor(ratio));
+        rect.setAttribute("opacity", "0.92");
+        rect.setAttribute("stroke", "rgba(13,17,23,0.55)");
+        rect.setAttribute("stroke-width", "0.6");
+        svg.appendChild(rect);
+      } else {
+        // bottom up to quota: red solid; quota up to usage: striped
+        const rectLow = document.createElementNS(ns, "rect");
+        rectLow.setAttribute("x", drawX); rectLow.setAttribute("y", quotaY);
+        rectLow.setAttribute("width", w);
+        rectLow.setAttribute("height", baselineY - quotaY);
+        rectLow.setAttribute("fill", "#f85149");
+        rectLow.setAttribute("opacity", "0.9");
+        rectLow.setAttribute("stroke", "rgba(13,17,23,0.55)");
+        rectLow.setAttribute("stroke-width", "0.6");
+        svg.appendChild(rectLow);
+        const yTop = valToY(usage);
+        const rectHi = document.createElementNS(ns, "rect");
+        rectHi.setAttribute("x", drawX); rectHi.setAttribute("y", yTop);
+        rectHi.setAttribute("width", w);
+        rectHi.setAttribute("height", quotaY - yTop);
+        rectHi.setAttribute("fill", "url(#overStripe)");
+        rectHi.setAttribute("opacity", "0.95");
+        svg.appendChild(rectHi);
+        // over text
+        if (w > 28) {
+          const lbl = document.createElementNS(ns, "text");
+          lbl.setAttribute("x", (xa + xb) / 2);
+          lbl.setAttribute("y", yTop - 2);
+          lbl.setAttribute("text-anchor", "middle");
+          lbl.setAttribute("fill", "#f85149");
+          lbl.setAttribute("font-size", "10");
+          lbl.setAttribute("font-weight", "700");
+          lbl.textContent = `+${usage - quota}`;
+          svg.appendChild(lbl);
+        }
+      }
+    }
+
+    // tooltip target (full column from top to baseline, ignore visual gap)
+    const hot = document.createElementNS(ns, "rect");
+    hot.setAttribute("x", xa); hot.setAttribute("y", PAD_TOP);
+    hot.setAttribute("width", Math.max(rawW, 0.5));
+    hot.setAttribute("height", innerH);
+    hot.setAttribute("fill", "transparent");
+    hot.style.cursor = "help";
+    hot.addEventListener("mousemove", (ev) => {
+      const overText = usage > quota
+        ? `<div class="row" style="color:var(--danger)">超出: <b>${usage - quota} 卡</b></div>`
+        : "";
+      showTip(ev, `
+        <div class="ttl">${fmtDateTime(s.start)} → ${fmtDateTime(s.end)}</div>
+        <div class="row">占用: <b>${usage} 卡</b></div>
+        <div class="row">空闲: <b style="color:${free<0?'var(--danger)':'var(--ok)'}">${free} 卡</b></div>
+        ${overText}
+        <div class="row">利用率: <b>${(ratio*100).toFixed(0)}%</b></div>
+        <div class="row">时长: <b>${fmtDur(s.end - s.start)}</b></div>
+      `);
+    });
+    hot.addEventListener("mouseleave", hideTip);
+    svg.appendChild(hot);
+
+    // free count label
+    if (w > 36 && usage <= quota) {
+      const lbl = document.createElementNS(ns, "text");
+      lbl.setAttribute("x", (xa + xb) / 2);
+      lbl.setAttribute("y", valToY(usage) - 4);
+      lbl.setAttribute("text-anchor", "middle");
+      lbl.setAttribute("fill", free < 0 ? "#f85149" : "#3fb950");
+      lbl.setAttribute("font-size", "10");
+      lbl.setAttribute("font-weight", "600");
+      lbl.textContent = `空 ${free}`;
+      svg.appendChild(lbl);
+    }
+  }
+
+  // quota line (drawn on top)
+  const quotaLine = document.createElementNS(ns, "line");
+  quotaLine.setAttribute("x1", 0); quotaLine.setAttribute("x2", width);
+  quotaLine.setAttribute("y1", quotaY); quotaLine.setAttribute("y2", quotaY);
+  quotaLine.setAttribute("stroke", "#f85149");
+  quotaLine.setAttribute("stroke-width", "1.5");
+  quotaLine.setAttribute("stroke-dasharray", "5,3");
+  svg.appendChild(quotaLine);
+
+  // baseline
+  const base = document.createElementNS(ns, "line");
+  base.setAttribute("x1", 0); base.setAttribute("x2", width);
+  base.setAttribute("y1", baselineY); base.setAttribute("y2", baselineY);
+  base.setAttribute("stroke", "var(--border)");
+  svg.appendChild(base);
+
+  utilArea.appendChild(svg);
+}
+
+// Continuous HSL gradient: green (low usage / lots of free) -> yellow -> orange -> red
+// Hue and lightness both shift, so neighbouring segments with similar ratios still differ visibly.
+function utilColor(ratio) {
+  if (ratio > 1.0001) return "#f85149";
+  const r = Math.max(0, Math.min(1, ratio));
+  // Hue: 138 (green) -> 84 (yellow-green) -> 42 (amber) -> 8 (red)
+  const hue = 138 - r * 130;
+  // Saturation grows slightly as we approach the red end (warmer feel).
+  const sat = 55 + r * 20;
+  // Lightness drops as ratio rises so even two greenish bars are distinguishable.
+  const light = 52 - r * 14;
+  return `hsl(${hue.toFixed(1)}, ${sat.toFixed(1)}%, ${light.toFixed(1)}%)`;
+}
+
+function renderSidebar() {
+  const list = $("#taskList");
+  list.innerHTML = "";
+  const sorted = [...state.tasks].sort((a, b) => a.start - b.start);
+  $("#taskCount").textContent = sorted.length;
+  if (sorted.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "暂无任务<br/>点击 <code>＋ 新建任务</code> 添加";
+    list.appendChild(empty);
+    return;
+  }
+  for (const t of sorted) {
+    const item = document.createElement("div");
+    item.className = "task-item" + (t.id === state.selectedId ? " selected" : "");
+    item.dataset.id = t.id;
+    item.innerHTML = `
+      <div class="task-color" style="background:${t.color}"></div>
+      <div class="task-info">
+        <div class="task-name">${escapeHTML(t.name)}</div>
+        <div class="task-meta">
+          <span class="gpu-tag">${t.gpus} 卡</span>
+          · ${fmtDateTime(t.start)} → ${fmtDateTime(t.end)} · ${fmtDur(t.end - t.start)}
+        </div>
+      </div>
+    `;
+    item.addEventListener("click", () => {
+      selectTask(t.id);
+    });
+    item.addEventListener("dblclick", () => openModal(t.id));
+    list.appendChild(item);
+  }
+}
+
+function renderStats() {
+  const {peak, overCount} = summarize();
+  $("#peakUsage").textContent = `${peak} 卡`;
+  $("#peakUtil").textContent = state.quota > 0
+    ? `${Math.round(peak / state.quota * 100)}%`
+    : "0%";
+  const over = $("#overCount");
+  over.textContent = overCount;
+  over.style.color = overCount > 0 ? "var(--danger)" : "var(--text)";
+}
+
+// ============== Bar interactions ==============
+function selectTask(id) {
+  if (state.selectedId !== id) {
+    clearPendingDelete();
+  }
+  state.selectedId = id;
+  renderSidebar();
+  renderGanttSelection();
+}
+function clearSelection() {
+  if (!state.selectedId && !state.pendingDeleteId) return;
+  state.selectedId = null;
+  clearPendingDelete();
+  renderSidebar();
+  renderGanttSelection();
+}
+function renderGanttSelection() {
+  // toggle CSS classes only, avoid full re-render
+  const bars = ganttArea.querySelectorAll(".task-bar");
+  bars.forEach(b => {
+    const id = b.dataset.id;
+    b.classList.toggle("selected", id === state.selectedId);
+    b.classList.toggle("pending-delete", id === state.pendingDeleteId);
+  });
+}
+function markPendingDelete(id) {
+  state.pendingDeleteId = id;
+  renderGanttSelection();
+  setStatus("再按一次 ⌫ 删除该任务（1.8 秒内）。按 Esc 取消");
+  if (pendingDeleteTimer) clearTimeout(pendingDeleteTimer);
+  pendingDeleteTimer = setTimeout(() => {
+    clearPendingDelete();
+    setStatus("已取消删除");
+  }, 1800);
+}
+function clearPendingDelete() {
+  if (pendingDeleteTimer) { clearTimeout(pendingDeleteTimer); pendingDeleteTimer = null; }
+  if (state.pendingDeleteId) {
+    state.pendingDeleteId = null;
+    renderGanttSelection();
+  }
+}
+function deleteTaskById(id) {
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  pushHistory(`删除任务：${t.name}`);
+  state.tasks = state.tasks.filter(x => x.id !== id);
+  state.selectedId = null;
+  clearPendingDelete();
+  save();
+  render();
+  setStatus(`已删除任务：${t.name}`);
+}
+
+// ---- Drag guide (vertical lines + time labels while dragging a task bar) ----
+let _dragGuideEls = null;
+function showDragGuide(task, mode) {
+  if (_dragGuideEls) hideDragGuide();
+  const layer = canvasInner;
+  const sLine = document.createElement("div"); sLine.className = "drag-guide-line start";
+  const eLine = document.createElement("div"); eLine.className = "drag-guide-line end";
+  const sLbl = document.createElement("div"); sLbl.className = "drag-guide-label start";
+  const eLbl = document.createElement("div"); eLbl.className = "drag-guide-label end";
+  const dLbl = document.createElement("div"); dLbl.className = "drag-guide-label dur";
+  layer.append(sLine, eLine, sLbl, eLbl, dLbl);
+  _dragGuideEls = { sLine, eLine, sLbl, eLbl, dLbl };
+  updateDragGuide(task, mode);
+}
+function updateDragGuide(task, mode) {
+  if (!_dragGuideEls) return;
+  const range = computeRange();
+  const xs = timeToX(task.start, range);
+  const xe = timeToX(task.end, range);
+  const { sLine, eLine, sLbl, eLbl, dLbl } = _dragGuideEls;
+  sLine.style.left = xs + "px";
+  eLine.style.left = xe + "px";
+  sLbl.style.left = xs + "px";
+  eLbl.style.left = xe + "px";
+  dLbl.style.left = ((xs + xe) / 2) + "px";
+  sLbl.textContent = "起 " + fmtDateTime(task.start);
+  eLbl.textContent = "止 " + fmtDateTime(task.end);
+  dLbl.textContent = fmtDur(task.end - task.start);
+  // resize-l: emphasize start; resize-r: emphasize end; move: both equal
+  sLine.style.opacity = mode === "resize-r" ? "0.45" : "1";
+  eLine.style.opacity = mode === "resize-l" ? "0.45" : "1";
+}
+function hideDragGuide() {
+  if (!_dragGuideEls) return;
+  Object.values(_dragGuideEls).forEach(el => el.remove());
+  _dragGuideEls = null;
+}
+
+function attachBarHandlers(bar, task) {
+  let mode = null; // 'move' | 'resize-l' | 'resize-r'
+  let startX = 0, origStart = 0, origEnd = 0;
+  let historyPushed = false;
+
+  const onMouseDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectTask(task.id);
+    if (e.target.classList.contains("resize-handle")) {
+      mode = e.target.classList.contains("left") ? "resize-l" : "resize-r";
+    } else {
+      mode = "move";
+    }
+    startX = e.clientX;
+    origStart = task.start;
+    origEnd = task.end;
+    historyPushed = false;
+    bar.classList.add("dragging");
+    showDragGuide(task, mode);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+  const onMouseMove = (e) => {
+    const dx = e.clientX - startX;
+    const dms = dx / pxPerMs();
+    if (Math.abs(dx) > 2 && !historyPushed) {
+      // first significant drag → snapshot prior state
+      pushHistory(mode === "move" ? `移动：${task.name}` : `调整时长：${task.name}`);
+      historyPushed = true;
+    }
+    if (mode === "move") {
+      const dur = origEnd - origStart;
+      task.start = snap(origStart + dms);
+      task.end = task.start + dur;
+    } else if (mode === "resize-l") {
+      task.start = snap(Math.min(origEnd - 5 * 60 * 1000, origStart + dms));
+    } else if (mode === "resize-r") {
+      task.end = snap(Math.max(origStart + 5 * 60 * 1000, origEnd + dms));
+    }
+    render();
+    updateDragGuide(task, mode);
+  };
+  const onMouseUp = () => {
+    bar.classList.remove("dragging");
+    hideDragGuide();
+    if (!historyPushed) {
+      // user pressed but didn't actually drag — keep selection only
+    } else {
+      save();
+      setStatus(`${task.name}: ${fmtDateTime(task.start)} → ${fmtDateTime(task.end)} · ${task.gpus} 卡`);
+    }
+    mode = null;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  };
+  bar.addEventListener("mousedown", onMouseDown);
+  bar.addEventListener("dblclick", () => openModal(task.id));
+  bar.addEventListener("mousemove", (e) => {
+    if (mode) return;
+    showTip(e, `
+      <div class="ttl">${escapeHTML(task.name)}</div>
+      <div class="row">起: <b>${fmtDateTime(task.start)}</b></div>
+      <div class="row">止: <b>${fmtDateTime(task.end)}</b></div>
+      <div class="row">时长: <b>${fmtDur(task.end - task.start)}</b></div>
+      <div class="row">占用: <b>${task.gpus} 卡</b></div>
+    `);
+  });
+  bar.addEventListener("mouseleave", hideTip);
+}
+
+// ============== Modal ==============
+let editingId = null;
+
+function openModal(id) {
+  editingId = id || null;
+  const t = id ? state.tasks.find(x => x.id === id) : null;
+  $("#modalTitle").textContent = t ? "编辑任务" : "新建任务";
+  $("#fName").value = t ? t.name : "";
+  $("#fGpus").value = t ? t.gpus : 8;
+  const now = Date.now();
+  const def_s = t ? t.start : Math.floor(now / HOUR_MS) * HOUR_MS;
+  const def_e = t ? t.end : def_s + 4 * HOUR_MS;
+  $("#fStart").value = toLocalInput(def_s);
+  $("#fEnd").value = toLocalInput(def_e);
+  // default reco hours = task duration
+  $("#recoHours").value = t ? ((t.end - t.start) / HOUR_MS).toFixed(1) : "4";
+  $("#recoList").innerHTML = `<div class="reco-empty">填写"占用卡数"和"需要时长"后点击推荐，自动列出最早可用时段。</div>`;
+  $("#warnBanner").classList.remove("show");
+  $("#warnConfirm").checked = false;
+
+  const colorRow = $("#colorRow");
+  colorRow.innerHTML = "";
+  const currentColor = t ? t.color : COLORS[state.tasks.length % COLORS.length];
+  for (const c of COLORS) {
+    const chip = document.createElement("div");
+    chip.className = "color-chip" + (c === currentColor ? " active" : "");
+    chip.style.background = c;
+    chip.dataset.color = c;
+    chip.addEventListener("click", () => {
+      colorRow.querySelectorAll(".color-chip").forEach(x => x.classList.remove("active"));
+      chip.classList.add("active");
+    });
+    colorRow.appendChild(chip);
+  }
+
+  $("#fDelete").style.display = t ? "inline-block" : "none";
+  $("#modal").classList.add("show");
+  $("#fName").focus();
+
+  // live re-check on field change
+  ["fGpus", "fStart", "fEnd"].forEach(k => {
+    const el = document.getElementById(k);
+    el.oninput = updateWarnBanner;
+  });
+  updateWarnBanner();
+}
+
+function updateWarnBanner() {
+  const gpus = Math.max(1, parseInt($("#fGpus").value, 10) || 1);
+  const start = fromLocalInput($("#fStart").value);
+  const end = fromLocalInput($("#fEnd").value);
+  const banner = $("#warnBanner");
+  if (!start || !end || end <= start) {
+    banner.classList.remove("show");
+    return;
+  }
+  const res = checkOverQuota(start, end, gpus, editingId);
+  if (!res.over) {
+    banner.classList.remove("show");
+    $("#warnConfirm").checked = false;
+    return;
+  }
+  banner.classList.add("show");
+  // summarize over spans
+  let totalOverMs = 0, maxExcess = 0;
+  for (const sp of res.overSpans) {
+    totalOverMs += sp.end - sp.start;
+    maxExcess = Math.max(maxExcess, sp.used - state.quota);
+  }
+  const detail = `
+    保存后将在 <b>${res.overSpans.length}</b> 个时段内超出配额 <b>${state.quota}</b> 卡，
+    超出累计时长 <b>${fmtDur(totalOverMs)}</b>，峰值超出 <b style="color:var(--danger)">+${maxExcess} 卡</b>。
+    超配时间内任务会因卡数不足而排队或失败。
+  `;
+  $("#warnDetail").innerHTML = detail;
+}
+
+function recommendSlots() {
+  const gpus = Math.max(1, parseInt($("#fGpus").value, 10) || 1);
+  const hours = Math.max(0.25, parseFloat($("#recoHours").value) || 1);
+  const dur = Math.round(hours * HOUR_MS);
+  const slots = suggestSlots(gpus, dur, 6);
+  const list = $("#recoList");
+  list.innerHTML = "";
+  if (slots.length === 0) {
+    list.innerHTML = `<div class="reco-empty">在未来 14 天内未找到可容纳 <b>${gpus}</b> 卡 × <b>${hours}</b>h 的连续空闲时段（当前总配额 ${state.quota}）。考虑减小卡数或时长。</div>`;
+    return;
+  }
+  for (const s of slots) {
+    const item = document.createElement("div");
+    item.className = "reco-item";
+    item.innerHTML = `
+      <span class="rt">${fmtDateTime(s.start)} → ${fmtDateTime(s.end)}</span>
+      <span class="rf">空 ${s.free} 卡</span>
+    `;
+    item.addEventListener("click", () => {
+      $("#fStart").value = toLocalInput(s.start);
+      $("#fEnd").value = toLocalInput(s.end);
+      list.querySelectorAll(".reco-item").forEach(x => x.style.borderColor = "");
+      item.style.borderColor = "var(--accent)";
+      updateWarnBanner();
+    });
+    list.appendChild(item);
+  }
+}
+
+function closeModal() {
+  $("#modal").classList.remove("show");
+  editingId = null;
+}
+function saveModal() {
+  const name = $("#fName").value.trim() || "未命名任务";
+  const gpus = Math.max(1, parseInt($("#fGpus").value, 10) || 1);
+  const start = fromLocalInput($("#fStart").value);
+  const end = fromLocalInput($("#fEnd").value);
+  if (!start || !end || end <= start) {
+    alert("请检查起止时间：结束时间必须晚于开始时间。");
+    return;
+  }
+  // Over-quota guard
+  const res = checkOverQuota(start, end, gpus, editingId);
+  if (res.over && !$("#warnConfirm").checked) {
+    $("#warnBanner").classList.add("show");
+    updateWarnBanner();
+    setStatus("超出配额，需勾选确认后才能提交");
+    $("#warnConfirm").focus();
+    return;
+  }
+  const color = $("#colorRow .color-chip.active")?.dataset.color || COLORS[0];
+  if (editingId) {
+    pushHistory("编辑任务");
+    const t = state.tasks.find(x => x.id === editingId);
+    Object.assign(t, {name, gpus, start, end, color});
+  } else {
+    pushHistory("新建任务");
+    state.tasks.push({id: uid(), name, gpus, start, end, color});
+  }
+  save();
+  closeModal();
+  render();
+  setStatus(editingId ? "已更新任务" : (res.over ? "已强制提交（含超配时段）" : "已新建任务"));
+}
+function deleteEditing() {
+  if (!editingId) return;
+  if (!confirm("确认删除该任务？")) return;
+  pushHistory("删除任务");
+  state.tasks = state.tasks.filter(t => t.id !== editingId);
+  save();
+  closeModal();
+  render();
+  setStatus("已删除任务");
+}
+
+// ============== Misc UI ==============
+const tooltip = $("#tooltip");
+function showTip(ev, html) {
+  tooltip.innerHTML = html;
+  tooltip.classList.add("show");
+  const x = ev.clientX + 14, y = ev.clientY + 14;
+  const rect = tooltip.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 8;
+  tooltip.style.left = Math.min(x, maxX) + "px";
+  tooltip.style.top = Math.min(y, window.innerHeight - rect.height - 8) + "px";
+}
+function hideTip() { tooltip.classList.remove("show"); }
+
+function setStatus(s) { $("#statusText").textContent = s; }
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function shade(hex, percent) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const amt = Math.round(2.55 * percent);
+  const R = (num >> 16) + amt;
+  const G = ((num >> 8) & 0x00FF) + amt;
+  const B = (num & 0x0000FF) + amt;
+  return "#" + (
+    0x1000000 +
+    (R < 0 ? 0 : R > 255 ? 255 : R) * 0x10000 +
+    (G < 0 ? 0 : G > 255 ? 255 : G) * 0x100 +
+    (B < 0 ? 0 : B > 255 ? 255 : B)
+  ).toString(16).slice(1);
+}
+function isLight(hex) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = (num >> 16) & 0xFF, g = (num >> 8) & 0xFF, b = num & 0xFF;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 160;
+}
+
+// ============== Wire-up ==============
+$("#addTaskBtn").addEventListener("click", () => openModal(null));
+$("#themeBtn").addEventListener("click", toggleTheme);
+$("#undoBtn").addEventListener("click", undo);
+$("#redoBtn").addEventListener("click", redo);
+$("#recoBtn").addEventListener("click", recommendSlots);
+$("#modalClose").addEventListener("click", closeModal);
+$("#fCancel").addEventListener("click", closeModal);
+$("#fSave").addEventListener("click", saveModal);
+$("#fDelete").addEventListener("click", deleteEditing);
+$("#modal").addEventListener("click", (e) => {
+  if (e.target.id === "modal") closeModal();
+});
+
+$("#quotaInput").addEventListener("change", (e) => {
+  const newQuota = Math.max(1, parseInt(e.target.value, 10) || 1);
+  if (newQuota === state.quota) return;
+  pushHistory(`配额 ${state.quota} → ${newQuota}`);
+  state.quota = newQuota;
+  save(); render();
+});
+$("#viewMode").addEventListener("change", (e) => {
+  state.view = e.target.value;
+  render();
+});
+$("#zoomIn").addEventListener("click", () => {
+  state.zoom = Math.min(16, state.zoom * 1.4); render();
+});
+$("#zoomOut").addEventListener("click", () => {
+  state.zoom = Math.max(0.15, state.zoom / 1.4); render();
+});
+$("#todayBtn").addEventListener("click", () => {
+  const now = Date.now();
+  const range = computeRange();
+  const x = timeToX(now, range);
+  canvasWrap.scrollTo({left: Math.max(0, x - canvasWrap.clientWidth/2), behavior: "smooth"});
+});
+$("#fitBtn").addEventListener("click", () => fitToTasks());
+
+function fitToTasks() {
+  state.rangeStart = state.rangeEnd = null;
+  if (state.tasks.length === 0) { render(); return; }
+  let mn = Infinity, mx = -Infinity;
+  for (const t of state.tasks) {
+    mn = Math.min(mn, t.start);
+    mx = Math.max(mx, t.end);
+  }
+  const span = Math.max(mx - mn, HOUR_MS); // avoid zero-span
+  const targetWidth = Math.max(canvasWrap.clientWidth - 40, 200);
+  let base;
+  if (state.view === "hour") base = 80 / HOUR_MS;
+  else if (state.view === "day") base = 4 / HOUR_MS;
+  else base = 1.2 / HOUR_MS;
+  // 1.2 padding so tasks don't hug the edges
+  state.zoom = clamp(targetWidth / (span * base * 1.2), 0.15, 16);
+  render();
+  canvasWrap.scrollLeft = 0;
+}
+$("#rangeStart").addEventListener("change", (e) => {
+  state.rangeStart = fromLocalInput(e.target.value); render();
+});
+$("#rangeEnd").addEventListener("change", (e) => {
+  state.rangeEnd = fromLocalInput(e.target.value); render();
+});
+
+$("#exportBtn").addEventListener("click", () => {
+  const data = JSON.stringify({quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt}, null, 2);
+  const blob = new Blob([data], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `gpu-board-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// --- Cloud sync wire-up ---
+const syncPopover = $("#syncPopover");
+$("#syncBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  syncPopover.classList.toggle("show");
+  refreshSyncPopover();
+});
+document.addEventListener("click", (e) => {
+  if (!syncPopover.classList.contains("show")) return;
+  if (e.target.closest("#syncBtn") || e.target.closest("#syncPopover")) return;
+  syncPopover.classList.remove("show");
+});
+$("#syncBindBtn").addEventListener("click", () => bindSyncFile());
+$("#syncCreateBtn").addEventListener("click", () => createSyncFile());
+$("#syncPullBtn").addEventListener("click", () => sync.handle && syncMergeFromFile({}));
+$("#syncPushBtn").addEventListener("click", async () => {
+  if (!sync.handle) return;
+  setSyncStatus("busy");
+  try {
+    if (!(await ensureRwPermission(sync.handle))) { setSyncStatus("err", "权限被撤销"); return; }
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+    sync.lastPushAt = Date.now();
+    setSyncStatus("ok");
+    setStatus("已推送到云端文件");
+  } catch (err) {
+    setSyncStatus("err", err.message || String(err));
+  }
+});
+$("#syncUnbindBtn").addEventListener("click", () => unbindSyncFile());
+window.addEventListener("focus", () => { if (sync.handle) syncMergeFromFile({}); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && sync.handle) syncMergeFromFile({});
+});
+$("#importBtn").addEventListener("click", () => $("#importFile").click());
+$("#importFile").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (Array.isArray(data.tasks)) {
+        pushHistory("导入数据");
+        state.quota = data.quota ?? state.quota;
+        state.tasks = data.tasks;
+        save(); render();
+        setStatus(`已导入 ${state.tasks.length} 个任务（可撤回）`);
+      }
+    } catch(err) { alert("导入失败：" + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+$("#clearBtn").addEventListener("click", () => {
+  if (state.tasks.length === 0) { setStatus("当前已是空白"); return; }
+  if (!confirm("确认清空所有任务？可通过撤回恢复。")) return;
+  pushHistory(`清空 ${state.tasks.length} 个任务`);
+  state.tasks = []; state.selectedId = null;
+  save(); render();
+  setStatus("已清空（可撤回）");
+});
+
+document.addEventListener("keydown", (e) => {
+  if ($("#modal").classList.contains("show")) {
+    if (e.key === "Escape") closeModal();
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveModal();
+    return;
+  }
+  // Redo: ⌘/Ctrl + Shift + Z  (also covers Windows convention)
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    e.preventDefault();
+    redo();
+    return;
+  }
+  // Undo: ⌘/Ctrl + Z (without shift)
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+    e.preventDefault();
+    undo();
+    return;
+  }
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "n" || e.key === "N") { e.preventDefault(); openModal(null); }
+  if (e.key === "Escape") {
+    if (state.pendingDeleteId) { clearPendingDelete(); setStatus("已取消删除"); }
+    else if (state.selectedId) { clearSelection(); setStatus("已取消选中"); }
+    return;
+  }
+  if ((e.key === "Backspace" || e.key === "Delete") && state.selectedId) {
+    e.preventDefault();
+    if (state.pendingDeleteId === state.selectedId) {
+      // second press → confirm delete
+      deleteTaskById(state.selectedId);
+    } else {
+      // first press → mark pending
+      markPendingDelete(state.selectedId);
+    }
+  }
+});
+
+window.addEventListener("resize", () => render());
+
+// ============== Click empty area to clear selection ==============
+// Any click that did not land on a task bar (or on an interactive control)
+// should clear the current selection. We listen on document and walk up
+// from the click target to look for a `.task-bar`.
+document.addEventListener("mousedown", (e) => {
+  if (!state.selectedId && !state.pendingDeleteId) return;
+  // ignore clicks inside the modal / sidebar list / toolbar buttons
+  if (e.target.closest(".task-bar")) return;
+  if (e.target.closest(".task-item")) return;
+  if (e.target.closest(".modal")) return;
+  if (e.target.closest(".sync-popover")) return;
+  if (e.target.closest("button, select, input, textarea, label")) return;
+  clearSelection();
+});
+
+// ============== Pinch / Ctrl-Wheel zoom on canvas ==============
+// On macOS trackpad pinch, browsers dispatch a wheel event with ctrlKey=true.
+// Holding Ctrl/⌘ + scroll also triggers this. We use the cursor X as anchor so
+// the timestamp under the cursor stays in place across zoom levels.
+function zoomAt(clientX, factor) {
+  const before = pxPerMs();
+  const range = computeRange();
+  const rect = canvasWrap.getBoundingClientRect();
+  const cursorOffset = clientX - rect.left;            // in viewport
+  const cursorContent = canvasWrap.scrollLeft + cursorOffset;
+  const cursorTime = range[0] + cursorContent / before;
+
+  const newZoom = clamp(state.zoom * factor, 0.15, 16);
+  if (newZoom === state.zoom) return;
+  state.zoom = newZoom;
+  render();
+
+  // re-compute and re-center on the same timestamp
+  const after = pxPerMs();
+  const newRange = computeRange();
+  const newContent = (cursorTime - newRange[0]) * after;
+  canvasWrap.scrollLeft = Math.max(0, newContent - cursorOffset);
+}
+
+const onCanvasWheel = (e) => {
+  // Pinch (trackpad) generates synthetic wheel with ctrlKey=true on macOS.
+  // Ctrl/⌘ + wheel also opted in.
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  // Trackpad pinch on macOS dispatches wheel with ctrlKey=true.
+  //   pinch-out (fingers apart) → deltaY < 0 → zoom IN  (放大)
+  //   pinch-in  (fingers close) → deltaY > 0 → zoom OUT (缩小)
+  // Same direction also feels right for ⌘ + 滚轮 上滚放大 / 下滚缩小.
+  const intensity = Math.min(Math.abs(e.deltaY), 50) / 50; // 0..1
+  const step = 1 + 0.18 * intensity;
+  const factor = e.deltaY < 0 ? step : 1 / step;
+  zoomAt(e.clientX, factor);
+};
+canvasWrap.addEventListener("wheel", onCanvasWheel, { passive: false });
+// Some browsers fire 'gesturestart/gesturechange' for trackpad pinch in addition to
+// (or instead of) ctrlKey wheel. Support those as a fallback.
+let gestureStartZoom = 1;
+canvasWrap.addEventListener("gesturestart", (e) => {
+  e.preventDefault();
+  gestureStartZoom = state.zoom;
+});
+canvasWrap.addEventListener("gesturechange", (e) => {
+  e.preventDefault();
+  // e.scale > 1 → pinch out → user expects zoom-in
+  const target = clamp(gestureStartZoom * e.scale, 0.15, 16);
+  if (Math.abs(target - state.zoom) < 1e-3) return;
+  // Anchor on event center
+  const rect = canvasWrap.getBoundingClientRect();
+  const cx = (e.clientX ?? rect.left + rect.width / 2);
+  const factor = target / state.zoom;
+  zoomAt(cx, factor);
+});
+canvasWrap.addEventListener("gestureend", (e) => e.preventDefault());
+
+// ============== Drag the timeline header to pan horizontally ==============
+// Press-and-drag anywhere on the timeline strip to scroll the canvas left/right.
+(() => {
+  let panning = false;
+  let panStartX = 0;
+  let panStartScroll = 0;
+  timelineHeader.style.cursor = "grab";
+  timelineHeader.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    panning = true;
+    panStartX = e.clientX;
+    panStartScroll = canvasWrap.scrollLeft;
+    timelineHeader.style.cursor = "grabbing";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!panning) return;
+    canvasWrap.scrollLeft = panStartScroll - (e.clientX - panStartX);
+  });
+  document.addEventListener("mouseup", () => {
+    if (!panning) return;
+    panning = false;
+    timelineHeader.style.cursor = "grab";
+  });
+})();
+
+// ============== Custom datetime picker ==============
+// Wraps each <input.dt-input> with a calendar icon button and a popover that
+// covers month/year/day/hour/minute selection — fully styled to match theme.
+function attachDateTimePickers() {
+  const ICON_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1.5"/><path d="M2 6.5h12"/><path d="M5.5 2v3"/><path d="M10.5 2v3"/></svg>';
+
+  const inputs = document.querySelectorAll('input.dt-input[data-dt="1"]');
+  inputs.forEach(input => {
+    if (input.dataset.dtBound === "1") return;
+    input.dataset.dtBound = "1";
+
+    // Wrap input
+    const wrap = document.createElement("span");
+    wrap.className = "dt-input-wrap";
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    input.autocomplete = "off";
+    input.spellcheck = false;
+
+    // Icon button
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dt-icon-btn";
+    btn.setAttribute("aria-label", "打开日期选择器");
+    btn.innerHTML = ICON_SVG;
+    wrap.appendChild(btn);
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      openDatePickerFor(input);
+    });
+  });
+
+  // Click outside closes popover
+  document.addEventListener("mousedown", (e) => {
+    if (!activeDP) return;
+    if (e.target.closest(".datepicker")) return;
+    if (e.target.closest(".dt-input-wrap")) return;
+    closeDatePicker();
+  });
+  // Esc closes
+  document.addEventListener("keydown", (e) => {
+    if (!activeDP) return;
+    if (e.key === "Escape") { closeDatePicker(); }
+  });
+  // Reposition on resize/scroll
+  window.addEventListener("resize", () => activeDP && positionDatePicker());
+  window.addEventListener("scroll", () => activeDP && positionDatePicker(), true);
+}
+
+let activeDP = null; // { input, el, year, month, day, hour, minute, mode }
+
+function openDatePickerFor(input) {
+  closeDatePicker();
+  // Parse current value, fall back to now
+  let ms = fromLocalInput(input.value);
+  if (!isFinite(ms)) ms = Date.now();
+  const d = new Date(ms);
+
+  const state = {
+    input,
+    year: d.getFullYear(),
+    month: d.getMonth(),    // 0-11
+    day: d.getDate(),
+    hour: d.getHours(),
+    minute: d.getMinutes(),
+    mode: "day",            // day | month | year
+    el: null,
+  };
+  const el = document.createElement("div");
+  el.className = "datepicker";
+  document.body.appendChild(el);
+  state.el = el;
+  activeDP = state;
+  input.closest(".dt-input-wrap")?.classList.add("open");
+
+  renderDatePicker();
+  positionDatePicker();
+}
+
+function closeDatePicker() {
+  if (!activeDP) return;
+  activeDP.input.closest(".dt-input-wrap")?.classList.remove("open");
+  activeDP.el.remove();
+  activeDP = null;
+}
+
+function positionDatePicker() {
+  if (!activeDP) return;
+  const wrap = activeDP.input.closest(".dt-input-wrap");
+  const r = wrap.getBoundingClientRect();
+  const el = activeDP.el;
+  const w = el.offsetWidth || 280;
+  const h = el.offsetHeight || 320;
+  let top = r.bottom + 6;
+  let left = r.left;
+  // Flip up if not enough room below
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  // Clamp horizontally
+  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+  if (left < 8) left = 8;
+  el.style.top = top + "px";
+  el.style.left = left + "px";
+}
+
+function commitDatePickerValue() {
+  if (!activeDP) return;
+  const s = activeDP;
+  const ms = new Date(s.year, s.month, s.day, s.hour, s.minute).getTime();
+  s.input.value = toLocalInput(ms);
+  s.input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function renderDatePicker() {
+  const s = activeDP;
+  if (!s) return;
+  const pad = n => String(n).padStart(2, "0");
+  const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+  const wdNames = ["一","二","三","四","五","六","日"];
+
+  let head = "";
+  let body = "";
+
+  if (s.mode === "day") {
+    head = `
+      <button class="nav" data-act="prev" title="上一月">‹</button>
+      <span class="label" data-act="toMonth">${s.year} 年 ${monthNames[s.month]}</span>
+      <button class="nav" data-act="next" title="下一月">›</button>
+    `;
+    // Build day grid (Mon-first)
+    const first = new Date(s.year, s.month, 1);
+    const firstWd = (first.getDay() + 6) % 7; // Mon=0..Sun=6
+    const daysInMonth = new Date(s.year, s.month + 1, 0).getDate();
+    const prevDays = new Date(s.year, s.month, 0).getDate();
+    const cells = [];
+    // weekday headers
+    for (let i = 0; i < 7; i++) {
+      cells.push(`<div class="wd${i >= 5 ? " we" : ""}">${wdNames[i]}</div>`);
+    }
+    // leading dim days
+    for (let i = firstWd - 1; i >= 0; i--) {
+      const dn = prevDays - i;
+      cells.push(`<div class="day dim" data-act="pickPrev" data-day="${dn}">${dn}</div>`);
+    }
+    const today = new Date();
+    const isToday = (y, m, d) =>
+      y === today.getFullYear() && m === today.getMonth() && d === today.getDate();
+    for (let dn = 1; dn <= daysInMonth; dn++) {
+      const cls = [
+        "day",
+        (dn === s.day) ? "selected" : "",
+        isToday(s.year, s.month, dn) ? "today" : "",
+      ].filter(Boolean).join(" ");
+      cells.push(`<div class="${cls}" data-act="pick" data-day="${dn}">${dn}</div>`);
+    }
+    const trailing = (7 - ((firstWd + daysInMonth) % 7)) % 7;
+    for (let i = 1; i <= trailing; i++) {
+      cells.push(`<div class="day dim" data-act="pickNext" data-day="${i}">${i}</div>`);
+    }
+    body = `<div class="datepicker-grid">${cells.join("")}</div>`;
+  } else if (s.mode === "month") {
+    head = `
+      <button class="nav" data-act="prevYear" title="上一年">‹</button>
+      <span class="label" data-act="toYear">${s.year} 年</span>
+      <button class="nav" data-act="nextYear" title="下一年">›</button>
+    `;
+    body = `<div class="datepicker-months">` +
+      monthNames.map((n, i) =>
+        `<div class="m ${i === s.month ? "selected" : ""}" data-act="pickMonth" data-m="${i}">${n}</div>`
+      ).join("") + `</div>`;
+  } else if (s.mode === "year") {
+    const startY = Math.floor(s.year / 12) * 12;
+    head = `
+      <button class="nav" data-act="prevYearGroup" title="上一组">‹</button>
+      <span class="label">${startY} - ${startY + 11}</span>
+      <button class="nav" data-act="nextYearGroup" title="下一组">›</button>
+    `;
+    const cells = [];
+    for (let i = 0; i < 12; i++) {
+      const y = startY + i;
+      cells.push(`<div class="y ${y === s.year ? "selected" : ""}" data-act="pickYear" data-y="${y}">${y}</div>`);
+    }
+    body = `<div class="datepicker-years">${cells.join("")}</div>`;
+  }
+
+  const time = `
+    <div class="datepicker-time">
+      <div class="t-cell">
+        <button class="t-arrow" data-act="hUp" title="时 +1">▲</button>
+        <input class="t-num" data-tin="h" type="number" min="0" max="23" value="${pad(s.hour)}" />
+        <button class="t-arrow" data-act="hDown" title="时 -1">▼</button>
+      </div>
+      <span class="colon">:</span>
+      <div class="t-cell">
+        <button class="t-arrow" data-act="mUp" title="分 +5">▲</button>
+        <input class="t-num" data-tin="m" type="number" min="0" max="59" value="${pad(s.minute)}" />
+        <button class="t-arrow" data-act="mDown" title="分 -5">▼</button>
+      </div>
+    </div>
+  `;
+  const foot = `
+    <div class="datepicker-foot">
+      <button data-act="now">此刻</button>
+      <button data-act="clear">清空</button>
+      <button class="primary" data-act="ok">确定</button>
+    </div>
+  `;
+
+  s.el.innerHTML = `
+    <div class="datepicker-head">${head}</div>
+    ${body}
+    ${time}
+    ${foot}
+  `;
+
+  s.el.addEventListener("click", onDatePickerClick);
+  // Hour/minute typed input
+  s.el.querySelectorAll(".t-num").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const v = parseInt(inp.value, 10);
+      if (inp.dataset.tin === "h") {
+        s.hour = isFinite(v) ? Math.max(0, Math.min(23, v)) : s.hour;
+      } else {
+        s.minute = isFinite(v) ? Math.max(0, Math.min(59, v)) : s.minute;
+      }
+      commitDatePickerValue();
+      // Refresh field text only (no re-render) to avoid focus jump
+      inp.value = String(inp.dataset.tin === "h" ? s.hour : s.minute).padStart(2, "0");
+    });
+  });
+  positionDatePicker();
+}
+
+function onDatePickerClick(e) {
+  const t = e.target.closest("[data-act]");
+  if (!t) return;
+  const s = activeDP;
+  if (!s) return;
+  const act = t.dataset.act;
+  switch (act) {
+    case "prev":
+      s.month--;
+      if (s.month < 0) { s.month = 11; s.year--; }
+      break;
+    case "next":
+      s.month++;
+      if (s.month > 11) { s.month = 0; s.year++; }
+      break;
+    case "prevYear":  s.year--; break;
+    case "nextYear":  s.year++; break;
+    case "prevYearGroup": s.year -= 12; break;
+    case "nextYearGroup": s.year += 12; break;
+    case "toMonth": s.mode = "month"; break;
+    case "toYear":  s.mode = "year"; break;
+    case "pickMonth":
+      s.month = parseInt(t.dataset.m, 10);
+      s.mode = "day";
+      break;
+    case "pickYear":
+      s.year = parseInt(t.dataset.y, 10);
+      s.mode = "month";
+      break;
+    case "pick": {
+      s.day = parseInt(t.dataset.day, 10);
+      commitDatePickerValue();
+      break;
+    }
+    case "pickPrev": {
+      // Day from previous month
+      const dn = parseInt(t.dataset.day, 10);
+      s.month--;
+      if (s.month < 0) { s.month = 11; s.year--; }
+      s.day = dn;
+      commitDatePickerValue();
+      break;
+    }
+    case "pickNext": {
+      const dn = parseInt(t.dataset.day, 10);
+      s.month++;
+      if (s.month > 11) { s.month = 0; s.year++; }
+      s.day = dn;
+      commitDatePickerValue();
+      break;
+    }
+    case "hUp":   s.hour = (s.hour + 1) % 24; commitDatePickerValue(); break;
+    case "hDown": s.hour = (s.hour + 23) % 24; commitDatePickerValue(); break;
+    case "mUp":   s.minute = (s.minute + 5) % 60; commitDatePickerValue(); break;
+    case "mDown": s.minute = (s.minute + 55) % 60; commitDatePickerValue(); break;
+    case "now": {
+      const d = new Date();
+      s.year = d.getFullYear(); s.month = d.getMonth(); s.day = d.getDate();
+      s.hour = d.getHours(); s.minute = d.getMinutes();
+      s.mode = "day";
+      commitDatePickerValue();
+      break;
+    }
+    case "clear":
+      s.input.value = "";
+      s.input.dispatchEvent(new Event("change", { bubbles: true }));
+      closeDatePicker();
+      return;
+    case "ok":
+      commitDatePickerValue();
+      closeDatePicker();
+      return;
+  }
+  renderDatePicker();
+}
+
+// ============== Init ==============
+loadTheme();
+attachDateTimePickers();
+if (!load()) seedDemoData();
+render();
+refreshUndoButton();
+refreshSyncPopover();
+// Auto-fit default view to all tasks (after first paint so canvas has width)
+requestAnimationFrame(() => fitToTasks());
+// Try to silently rebind a previously chosen sync file (no user gesture needed
+// if permission is still granted — Chrome remembers it for the session origin).
+tryRestoreSyncHandle();
+// auto-refresh now line every minute
+setInterval(render, 60 * 1000);
+</script>
+</body>
+</html>
