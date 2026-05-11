@@ -690,7 +690,7 @@
   .reco-head label { color: var(--muted); font-size: 12px; }
   .reco-head .reco-meta { color: var(--muted); font-size: 11px; }
   .reco-head input { width: 70px; padding: 4px 8px; }
-  .reco-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+  .reco-list { display: flex; flex-direction: column; gap: 4px; max-height: 145px; overflow-y: auto; }
   .reco-item {
     padding: 6px 8px; border-radius: 4px;
     background: var(--bg); border: 1px solid var(--border);
@@ -2350,8 +2350,8 @@ function openModal(id) {
 // ============== Modal field linking ==============
 // 数值联动：
 //   fHours  → 推算 fEnd（保持 fStart）
-//   fStart  → 平移 fEnd（保持时长）
-//   fEnd    → 反推 fHours（保持 fStart）
+//   fStart  → 反推 fHours（保持 fEnd 不变）
+//   fEnd    → 反推 fHours（保持 fStart 不变）
 //   fGpus / fHours 变化 → 自动刷新推荐时段
 let _recoTimer = null;
 let _linksAttached = false;
@@ -2364,7 +2364,7 @@ function attachModalLinks() {
   const hoursEl = $("#fHours");
   const gpusEl  = $("#fGpus");
 
-  // hours → end
+  // hours → end（保持 start 不变）
   const onHoursChange = () => {
     const start = fromLocalInput(startEl.value);
     const hours = parseFloat(hoursEl.value);
@@ -2379,20 +2379,22 @@ function attachModalLinks() {
   hoursEl.addEventListener("input", onHoursChange);
   hoursEl.addEventListener("change", onHoursChange);
 
-  // start → 平移 end（保持当前 hours）
+  // start → 反推 hours（保持 fEnd 不变）
   const onStartChange = () => {
     const start = fromLocalInput(startEl.value);
-    const hours = parseFloat(hoursEl.value);
-    if (start && isFinite(hours) && hours > 0) {
-      endEl.value = toLocalInput(Math.round(start + hours * HOUR_MS));
+    const end   = fromLocalInput(endEl.value);
+    if (start && end && end > start) {
+      hoursEl.value = trimNum((end - start) / HOUR_MS);
     }
     updateDurationHint();
     updateWarnBanner();
+    updateRecoMeta();
+    scheduleRecoRefresh();
   };
   startEl.addEventListener("input", onStartChange);
   startEl.addEventListener("change", onStartChange);
 
-  // end → 反推 hours
+  // end → 反推 hours（保持 fStart 不变）
   const onEndChange = () => {
     const start = fromLocalInput(startEl.value);
     const end   = fromLocalInput(endEl.value);
