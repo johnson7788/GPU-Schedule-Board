@@ -97,6 +97,16 @@
   }
   .toolbar .group { display: flex; align-items: center; gap: 6px; }
   .toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+
+  /* 紧凑按钮组：把若干个按钮"拼"成一个段（共享边框） */
+  .btn-group { display: inline-flex; align-items: stretch; }
+  .btn-group > button {
+    border-radius: 0;
+    margin-left: -1px;
+  }
+  .btn-group > button:first-child { border-top-left-radius: 5px; border-bottom-left-radius: 5px; margin-left: 0; }
+  .btn-group > button:last-child  { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+  .btn-group > button:hover { z-index: 2; }
   button, .btn {
     background: var(--panel-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 5px;
@@ -114,6 +124,7 @@
   button.danger:hover { background: rgba(248, 81, 73, 0.1); }
   button#undoBtn, button#redoBtn { position: relative; }
   button#undoBtn:disabled, button#redoBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  button#zoomLabelBtn:disabled { opacity: 1; color: var(--muted); cursor: default; padding-left: 4px; padding-right: 4px; }
   button#undoBtn[data-depth][data-show="1"]::after,
   button#redoBtn[data-depth][data-show="1"]::after {
     content: attr(data-depth);
@@ -349,12 +360,114 @@
     font-weight: 500; font-size: 13px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .task-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .task-meta { color: var(--muted); font-size: 11px; margin-top: 5px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
   .task-meta .gpu-tag {
     display: inline-block; padding: 1px 6px;
     background: rgba(88, 166, 255, 0.15); color: var(--accent);
     border-radius: 3px; font-weight: 600;
   }
+  .task-meta .time-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); font-variant-numeric: tabular-nums;
+    font-size: 11px; line-height: 1.2; white-space: nowrap;
+  }
+  .task-meta .time-chip.start { border-left: 2px solid var(--ok); }
+  .task-meta .time-chip.end   { border-left: 2px solid var(--accent); }
+  .task-meta .time-chip .lbl  { color: var(--muted); font-size: 10px; }
+  .task-meta .time-chip .dt   { font-weight: 500; }
+  .task-meta .time-chip .tm   { color: var(--accent); font-weight: 600; }
+  .task-meta .time-arrow { color: var(--muted); font-size: 11px; }
+  .task-meta .dur-chip {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: rgba(63, 185, 80, 0.12); color: var(--ok);
+    font-weight: 600; font-size: 11px;
+  }
+  .task-bar.multi-selected {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .task-item.multi-selected {
+    background: rgba(88, 166, 255, 0.10);
+    border-left: 3px solid var(--accent);
+    padding-left: 13px;
+  }
+
+  /* Marquee 框选层 */
+  .marquee {
+    position: absolute;
+    border: 1px dashed var(--accent);
+    background: rgba(88, 166, 255, 0.10);
+    pointer-events: none;
+    z-index: 90;
+    border-radius: 2px;
+  }
+
+  /* 右下角操作提示消息框（位于底部状态栏之上） */
+  .tip-box {
+    position: fixed; right: 16px; bottom: 48px; z-index: 1500;
+    width: 280px; max-width: calc(100vw - 32px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.30);
+    padding: 12px 14px 12px 14px;
+    color: var(--text); font-size: 12.5px; line-height: 1.55;
+    display: none;
+    animation: tipFadeIn 0.25s ease both;
+  }
+  .tip-box.show { display: block; }
+  .tip-box .tb-head {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--accent); font-weight: 600; font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .tip-box .tb-head .tb-spark { font-size: 14px; }
+  .tip-box .tb-close {
+    margin-left: auto; cursor: pointer; color: var(--muted);
+    width: 20px; height: 20px; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 13px; line-height: 1;
+    background: transparent; border: 0;
+  }
+  .tip-box .tb-close:hover { background: var(--row-hover); color: var(--text); }
+  .tip-box .tb-body { color: var(--text); }
+  .tip-box kbd {
+    display: inline-block; padding: 1px 5px; margin: 0 1px;
+    font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px;
+  }
+  .tip-box .tb-foot {
+    margin-top: 8px; display: flex; gap: 6px; align-items: center;
+    color: var(--muted); font-size: 11px;
+  }
+  .tip-box .tb-next {
+    margin-left: auto; padding: 2px 8px; font-size: 11px;
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 4px;
+    cursor: pointer;
+  }
+  .tip-box .tb-next:hover { color: var(--text); border-color: var(--accent); }
+  @keyframes tipFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 右下角"开/关提示"小按钮（位于底部状态栏之上） */
+  .tip-toggle {
+    position: fixed; right: 16px; bottom: 48px; z-index: 1499;
+    width: 36px; height: 36px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--panel); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 50%;
+    cursor: pointer; font-size: 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    transition: color 0.15s, border-color 0.15s, transform 0.15s;
+  }
+  .tip-toggle:hover { color: var(--accent); border-color: var(--accent); }
+  .tip-toggle.tucked { transform: translateY(0); }
+  .tip-toggle.hidden-by-box { display: none; }
 
   .canvas-wrap {
     overflow: auto; position: relative;
@@ -496,6 +609,18 @@
   }
   .gh-link:hover { color: var(--accent); background: var(--row-hover); }
   .gh-link svg { width: 14px; height: 14px; flex: none; }
+  .star-hint {
+    color: var(--muted); font-size: 11.5px;
+    padding: 2px 8px; border-radius: 4px;
+    background: linear-gradient(90deg, rgba(210,153,34,0.10), rgba(210,153,34,0.02));
+    border: 1px dashed rgba(210,153,34,0.35);
+    cursor: default; user-select: none;
+    animation: starPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes starPulse {
+    0%, 100% { opacity: 0.85; }
+    50%      { opacity: 1; border-color: rgba(210,153,34,0.65); }
+  }
 
   /* utilization band under gantt */
   .util-section {
@@ -802,28 +927,33 @@
           <span id="syncLastTime">上次同步：—</span>
         </div>
         <div class="sp-actions">
-          <button class="primary" id="syncBindBtn">绑定文件…</button>
-          <button id="syncCreateBtn">新建文件…</button>
-          <button id="syncPullBtn" disabled>立即拉取</button>
-          <button id="syncPushBtn" disabled>立即推送</button>
+          <button class="primary" id="syncBindBtn" title="选择本地（或云盘里）已有的 JSON 文件，先把它的内容拉下来并绑定">⬇ 导入并绑定</button>
+          <button id="syncCreateBtn" title="按当前数据另存为新文件并自动绑定">＋ 新建并绑定</button>
+          <button id="syncPullBtn" disabled title="立即从绑定文件拉取覆盖本地">↓ 立即拉取</button>
+          <button id="syncPushBtn" disabled title="立即把本地推送到绑定文件">↑ 立即推送</button>
           <button class="ghost danger" id="syncUnbindBtn" disabled>解绑</button>
         </div>
         <div class="sp-hint">
+          <b style="color:var(--text)">未绑定时</b>只能选择 <i>导入并绑定</i> 或 <i>新建并绑定</i>，避免误把本地状态推上去覆盖你的配置。<br/>
           把文件放在 <code>iCloud Drive</code> / <code>OneDrive</code> / <code>Dropbox</code> 等云盘目录，借助系统自动同步即可在多设备间共享。<br/>
           数据写入后会去抖 1.5s 自动推送；窗口重新获得焦点时会自动拉取并按时间戳合并。<br/>
           <span id="syncCompatHint" style="color:var(--danger);display:none">当前浏览器不支持文件句柄持久化（请用 Chrome / Edge / Brave）。</span>
         </div>
       </div>
     </span>
-    <button class="ghost" id="exportBtn" title="导出 JSON">导出</button>
-    <button class="ghost" id="importBtn" title="导入 JSON">导入</button>
+    <span class="btn-group" style="margin-left:4px">
+      <button class="ghost" id="exportBtn" title="导出 JSON">⬇ 导出</button>
+      <button class="ghost" id="importBtn" title="导入 JSON">⬆ 导入</button>
+    </span>
     <input id="importFile" type="file" accept="application/json" style="display:none" />
-    <button class="ghost danger" id="clearBtn">清空</button>
+    <button class="ghost danger" id="clearBtn" title="清空所有任务（可撤回）">清空</button>
   </header>
 
   <div class="toolbar">
     <button class="primary" id="addTaskBtn">＋ 新建任务</button>
     <div class="sep"></div>
+
+    <!-- 视图与缩放 -->
     <div class="group">
       <label style="color:var(--muted)">视图</label>
       <select id="viewMode">
@@ -832,17 +962,32 @@
         <option value="week">周</option>
       </select>
     </div>
-    <div class="group">
-      <button id="zoomOut">－</button>
-      <span class="zoom-display" id="zoomLabel">1.0×</span>
-      <button id="zoomIn">＋</button>
-    </div>
+    <span class="btn-group">
+      <button id="zoomOut" title="缩小">－</button>
+      <button id="zoomLabelBtn" class="ghost" disabled style="min-width:54px;font-variant-numeric:tabular-nums" title="当前缩放">
+        <span id="zoomLabel">1.0×</span>
+      </button>
+      <button id="zoomIn" title="放大">＋</button>
+    </span>
     <div class="sep"></div>
-    <button id="todayBtn">回到当前</button>
-    <button id="fitBtn">适应任务</button>
+
+    <!-- 导航 -->
+    <span class="btn-group">
+      <button id="todayBtn" title="滚动到当前时间">回到当前</button>
+      <button id="fitBtn" title="缩放以容纳所有任务">适应任务</button>
+    </span>
     <div class="sep"></div>
+
+    <!-- 整理操作 -->
+    <span class="btn-group">
+      <button id="autoFitBtn" title="将所有超配额任务自动后挪到首个可用时段">⚙ 自动调整</button>
+      <button id="cleanDoneBtn" title="清除截止时间已过的任务（可撤回）">🧹 清理过时</button>
+    </span>
+    <div class="sep"></div>
+
+    <!-- 范围筛选 -->
     <div class="group">
-      <label style="color:var(--muted)">范围起</label>
+      <label style="color:var(--muted)">范围</label>
       <input type="text" class="dt-input" id="rangeStart" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
       <label style="color:var(--muted)">至</label>
       <input type="text" class="dt-input" id="rangeEnd" placeholder="YYYY-MM-DD HH:mm" data-dt="1" />
@@ -886,6 +1031,7 @@
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2 .37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
       </a>
+      <span class="star-hint" title="如果觉得有用，欢迎在 GitHub 上点一个 Star ⭐">觉得有用？给个 ⭐ Star 支持一下～</span>
       <span id="statusText">就绪</span>
     </div>
   </div>
@@ -977,6 +1123,21 @@
   <div class="ctx-item danger" data-action="delete"><span>删除任务</span><span class="ctx-shortcut">⌫⌫</span></div>
 </div>
 
+<!-- 右下角操作提示消息框 + 开关 -->
+<button class="tip-toggle" id="tipToggle" title="打开操作提示" aria-label="打开操作提示">💡</button>
+<div class="tip-box" id="tipBox" role="status" aria-live="polite">
+  <div class="tb-head">
+    <span class="tb-spark">💡</span>
+    <span>操作提示</span>
+    <button class="tb-close" id="tipClose" title="关闭提示（设置将被记住）" aria-label="关闭提示">✕</button>
+  </div>
+  <div class="tb-body" id="tipBody">…</div>
+  <div class="tb-foot">
+    <span>下一条 <kbd>↻</kbd></span>
+    <button class="tb-next" id="tipNext">换一条</button>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -995,6 +1156,7 @@ const state = {
   quota: 64,
   tasks: [],          // {id,name,start,end,gpus,color}
   selectedId: null,
+  selectedIds: [],    // 多选集合，selectedId 始终包含其中（作为「主选中」）
   pendingDeleteId: null, // id awaiting second-press confirmation
   view: "day",        // hour | day | week
   zoom: 1.0,          // 0.25 .. 4
@@ -1378,7 +1540,7 @@ function refreshSyncPopover() {
     meta.style.display = "none";
   }
   pull.disabled = !has; push.disabled = !has; unbind.disabled = !has;
-  bind.textContent = has ? "更换文件…" : "绑定文件…";
+  bind.textContent = has ? "↻ 更换文件…" : "⬇ 导入并绑定";
   // Title on the header button
   const btn = $get("syncBtn");
   if (btn) {
@@ -1497,13 +1659,51 @@ async function syncMergeFromFile(opts) {
     try { remote = await readFromHandle(); } catch (e) { /* empty / corrupt — treat as nothing */ }
     const localTs = state.updatedAt || 0;
     const remoteTs = remote && remote.updatedAt || 0;
+    const isInitial = !!(opts && opts.initial);
+
+    if (isInitial) {
+      // 首次绑定的安全策略：永远以「导入文件」为语义
+      // - 远端有效：拉下来覆盖本地（无论时间戳）
+      // - 远端为空 / 损坏：要求用户显式确认才能用本地状态覆盖；否则报错并不写入
+      if (remote && Array.isArray(remote.tasks)) {
+        pushHistory("首次绑定·导入云端覆盖本地");
+        state.quota = remote.quota ?? state.quota;
+        state.tasks = remote.tasks;
+        state.updatedAt = remoteTs || Date.now();
+        save({ silent: true });
+        render();
+        sync.lastPullAt = Date.now();
+        setStatus(`已从云端导入（${state.tasks.length} 任务）`);
+      } else {
+        // 远端为空 — 询问是否把当前本地状态写入这个文件
+        const ok = confirm(
+          `所选文件「${sync.fileName}」内容为空。\n\n` +
+          `是否把当前本地数据（${state.tasks.length} 任务）写入并绑定？\n\n` +
+          `点【取消】可取消绑定，避免覆盖你想要的配置文件。`
+        );
+        if (!ok) {
+          // 中止绑定
+          await dbDelHandle();
+          sync.handle = null; sync.fileName = "";
+          setSyncStatus("off");
+          setStatus("已取消绑定（未写入文件）");
+          return;
+        }
+        await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+        sync.lastPushAt = Date.now();
+      }
+      setSyncStatus("ok");
+      return;
+    }
+
+    // 非首次：常规 last-write-wins
     if (!remote || !Array.isArray(remote.tasks)) {
       // remote is empty/invalid — push current local snapshot
       await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
       sync.lastPushAt = Date.now();
     } else if (remoteTs > localTs) {
       // remote wins — pull
-      pushHistory(opts && opts.initial ? "首次绑定·云端覆盖本地" : "云端更新·覆盖本地");
+      pushHistory("云端更新·覆盖本地");
       state.quota = remote.quota ?? state.quota;
       state.tasks = remote.tasks;
       state.updatedAt = remoteTs;
@@ -1924,10 +2124,14 @@ function renderGantt(range, width) {
     const x = timeToX(t.start, range);
     const w = Math.max(timeToX(t.end, range) - x, 6);
 
+    const isMain  = t.id === state.selectedId;
+    const isMulti = state.selectedIds.includes(t.id) && !isMain;
+    const pendingMulti = state.pendingDeleteId === "__multi__" && state.selectedIds.includes(t.id);
     const bar = document.createElement("div");
     bar.className = "task-bar"
-      + (t.id === state.selectedId ? " selected" : "")
-      + (t.id === state.pendingDeleteId ? " pending-delete" : "");
+      + (isMain ? " selected" : "")
+      + (isMulti ? " multi-selected" : "")
+      + ((t.id === state.pendingDeleteId || pendingMulti) ? " pending-delete" : "");
     bar.dataset.id = t.id;
     bar.style.left = x + "px";
     bar.style.width = w + "px";
@@ -2181,7 +2385,11 @@ function renderSidebar() {
   }
   for (const t of sorted) {
     const item = document.createElement("div");
-    item.className = "task-item" + (t.id === state.selectedId ? " selected" : "");
+    const isMain = t.id === state.selectedId;
+    const isMulti = state.selectedIds.includes(t.id);
+    item.className = "task-item"
+      + (isMain ? " selected" : "")
+      + (isMulti && !isMain ? " multi-selected" : "");
     item.dataset.id = t.id;
     item.innerHTML = `
       <div class="task-color" style="background:${t.color}"></div>
@@ -2189,16 +2397,43 @@ function renderSidebar() {
         <div class="task-name">${escapeHTML(t.name)}</div>
         <div class="task-meta">
           <span class="gpu-tag">${t.gpus} 卡</span>
-          · ${fmtDateTime(t.start)} → ${fmtDateTime(t.end)} · ${fmtDur(t.end - t.start)}
+          ${renderTimeChip(t.start, "start")}
+          <span class="time-arrow">→</span>
+          ${renderTimeChip(t.end, "end")}
+          <span class="dur-chip">${fmtDur(t.end - t.start)}</span>
         </div>
       </div>
     `;
-    item.addEventListener("click", () => {
-      selectTask(t.id);
+    item.addEventListener("click", (e) => {
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        toggleSelectMulti(t.id);
+      } else {
+        selectTask(t.id);
+      }
     });
     item.addEventListener("dblclick", () => openModal(t.id));
     list.appendChild(item);
   }
+}
+
+// 在左侧任务列表中显示一个紧凑的「时间芯片」：
+// 「日期(同年省年) + 时间」分两层；如果横跨多日则在「止」端补充日期。
+function renderTimeChip(ms, kind) {
+  const d = new Date(ms);
+  const pad = n => String(n).padStart(2, "0");
+  const yr  = d.getFullYear();
+  const now = new Date();
+  const sameYear = yr === now.getFullYear();
+  const date = sameYear
+    ? `${pad(d.getMonth()+1)}/${pad(d.getDate())}`
+    : `${yr}/${pad(d.getMonth()+1)}/${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const label = kind === "start" ? "起" : "止";
+  return `<span class="time-chip ${kind}" title="${fmtDateTime(ms)}">
+    <span class="lbl">${label}</span>
+    <span class="dt">${date}</span>
+    <span class="tm">${time}</span>
+  </span>`;
 }
 
 function renderStats() {
@@ -2218,12 +2453,47 @@ function selectTask(id) {
     clearPendingDelete();
   }
   state.selectedId = id;
+  state.selectedIds = id ? [id] : [];
+  renderSidebar();
+  renderGanttSelection();
+}
+// Shift / Cmd / Ctrl 多选切换
+function toggleSelectMulti(id) {
+  if (!id) return;
+  const set = new Set(state.selectedIds);
+  if (set.has(id)) {
+    set.delete(id);
+    if (state.selectedId === id) {
+      // 主选切换到剩下任意一个
+      state.selectedId = set.size > 0 ? [...set][set.size - 1] : null;
+    }
+  } else {
+    set.add(id);
+    state.selectedId = id; // 最近一次点选成为主选
+  }
+  state.selectedIds = [...set];
+  // 主选必须在多选集合内
+  if (state.selectedId && !state.selectedIds.includes(state.selectedId)) {
+    state.selectedIds.push(state.selectedId);
+  }
+  if (state.selectedIds.length === 0) state.selectedId = null;
+  clearPendingDelete();
+  renderSidebar();
+  renderGanttSelection();
+}
+// 直接设置多选集合（用于框选）
+function setSelection(ids) {
+  const arr = [...new Set(ids.filter(Boolean))];
+  state.selectedIds = arr;
+  state.selectedId = arr.length > 0 ? arr[arr.length - 1] : null;
+  clearPendingDelete();
   renderSidebar();
   renderGanttSelection();
 }
 function clearSelection() {
-  if (!state.selectedId && !state.pendingDeleteId) return;
+  if (!state.selectedId && !state.pendingDeleteId && state.selectedIds.length === 0) return;
   state.selectedId = null;
+  state.selectedIds = [];
   clearPendingDelete();
   renderSidebar();
   renderGanttSelection();
@@ -2231,10 +2501,14 @@ function clearSelection() {
 function renderGanttSelection() {
   // toggle CSS classes only, avoid full re-render
   const bars = ganttArea.querySelectorAll(".task-bar");
+  const multi = new Set(state.selectedIds);
+  const pendingMulti = state.pendingDeleteId === "__multi__";
   bars.forEach(b => {
     const id = b.dataset.id;
     b.classList.toggle("selected", id === state.selectedId);
-    b.classList.toggle("pending-delete", id === state.pendingDeleteId);
+    b.classList.toggle("multi-selected", multi.has(id) && id !== state.selectedId);
+    b.classList.toggle("pending-delete",
+      id === state.pendingDeleteId || (pendingMulti && multi.has(id)));
   });
 }
 function markPendingDelete(id) {
@@ -2304,15 +2578,29 @@ function hideDragGuide() {
   _dragGuideEls = null;
 }
 
+// 全局：是否正在拖动 task-bar，用于阻止 tooltip / cursor 显示
+let isDraggingBar = false;
+
 function attachBarHandlers(bar, task) {
   let mode = null; // 'move' | 'resize-l' | 'resize-r'
   let startX = 0, origStart = 0, origEnd = 0;
   let historyPushed = false;
+  // 批量拖动用：被一同移动的任务 + 它们的初始时间
+  let batchTasks = null;       // [{task, origStart, origEnd}]
 
   const onMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    selectTask(task.id);
+    // Shift / Cmd / Ctrl 点击：切换多选，不进入拖动模式
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      toggleSelectMulti(task.id);
+      return;
+    }
+    // 普通点击：若该 bar 已在多选集合内 → 整组拖动；否则收敛为单选
+    const inMulti = state.selectedIds.length > 1 && state.selectedIds.includes(task.id);
+    if (!inMulti) {
+      selectTask(task.id);
+    }
     if (e.target.classList.contains("resize-handle")) {
       mode = e.target.classList.contains("left") ? "resize-l" : "resize-r";
     } else {
@@ -2323,6 +2611,19 @@ function attachBarHandlers(bar, task) {
     origEnd = task.end;
     historyPushed = false;
     bar.classList.add("dragging");
+    // 拖动时立即隐藏 tooltip 与时间游标
+    isDraggingBar = true;
+    hideTip();
+    hideCursorTime();
+    // 准备批量任务
+    if (mode === "move" && inMulti) {
+      batchTasks = state.selectedIds
+        .map(id => state.tasks.find(x => x.id === id))
+        .filter(Boolean)
+        .map(t => ({ task: t, origStart: t.start, origEnd: t.end }));
+    } else {
+      batchTasks = null;
+    }
     showDragGuide(task, mode);
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
@@ -2332,13 +2633,26 @@ function attachBarHandlers(bar, task) {
     const dms = dx / pxPerMs();
     if (Math.abs(dx) > 2 && !historyPushed) {
       // first significant drag → snapshot prior state
-      pushHistory(mode === "move" ? `移动：${task.name}` : `调整时长：${task.name}`);
+      const label = batchTasks
+        ? `批量移动 ${batchTasks.length} 个任务`
+        : (mode === "move" ? `移动：${task.name}` : `调整时长：${task.name}`);
+      pushHistory(label);
       historyPushed = true;
     }
     if (mode === "move") {
-      const dur = origEnd - origStart;
-      task.start = snap(origStart + dms);
-      task.end = task.start + dur;
+      if (batchTasks && batchTasks.length > 1) {
+        // 批量拖动：每个任务按各自起点 + 同样的 dms 平移；不做避让 / 不限制超限
+        const snappedDms = snap(batchTasks[0].origStart + dms) - batchTasks[0].origStart;
+        for (const it of batchTasks) {
+          const dur = it.origEnd - it.origStart;
+          it.task.start = it.origStart + snappedDms;
+          it.task.end   = it.task.start + dur;
+        }
+      } else {
+        const dur = origEnd - origStart;
+        task.start = snap(origStart + dms);
+        task.end = task.start + dur;
+      }
     } else if (mode === "resize-l") {
       task.start = snap(Math.min(origEnd - 5 * 60 * 1000, origStart + dms));
     } else if (mode === "resize-r") {
@@ -2350,20 +2664,29 @@ function attachBarHandlers(bar, task) {
   const onMouseUp = () => {
     bar.classList.remove("dragging");
     hideDragGuide();
+    isDraggingBar = false;
     if (!historyPushed) {
       // user pressed but didn't actually drag — keep selection only
     } else {
       save();
-      setStatus(`${task.name}: ${fmtDateTime(task.start)} → ${fmtDateTime(task.end)} · ${task.gpus} 卡`);
+      if (batchTasks && batchTasks.length > 1) {
+        const sm = summarize();
+        const tail = sm.overCount > 0 ? `（含 ${sm.overCount} 段超配，可点 ⚙ 自动调整修复）` : "";
+        setStatus(`已批量移动 ${batchTasks.length} 个任务${tail}`);
+      } else {
+        setStatus(`${task.name}: ${fmtDateTime(task.start)} → ${fmtDateTime(task.end)} · ${task.gpus} 卡`);
+      }
     }
     mode = null;
+    batchTasks = null;
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("mouseup", onMouseUp);
   };
   bar.addEventListener("mousedown", onMouseDown);
   bar.addEventListener("dblclick", () => openModal(task.id));
   bar.addEventListener("mousemove", (e) => {
-    if (mode) return;
+    if (mode || isDraggingBar) return;
+    if (ctxMenu && ctxMenu.classList.contains("show")) return; // 右键菜单期间不显示
     showTip(e, `
       <div class="ttl">${escapeHTML(task.name)}</div>
       <div class="row">起: <b>${fmtDateTime(task.start)}</b></div>
@@ -2638,6 +2961,9 @@ function deleteEditing() {
 // ============== Misc UI ==============
 const tooltip = $("#tooltip");
 function showTip(ev, html) {
+  // 右键菜单显示期间或正在拖动 task-bar 时，不再呼出悬浮提示
+  if (ctxMenu && ctxMenu.classList.contains("show")) return;
+  if (isDraggingBar) return;
   tooltip.innerHTML = html;
   tooltip.classList.add("show");
   const x = ev.clientX + 14, y = ev.clientY + 14;
@@ -2712,6 +3038,65 @@ $("#todayBtn").addEventListener("click", () => {
   canvasWrap.scrollTo({left: Math.max(0, x - canvasWrap.clientWidth/2), behavior: "smooth"});
 });
 $("#fitBtn").addEventListener("click", () => fitToTasks());
+
+// 「⚙ 自动调整」：在不超限前提下，把超配的任务依时间顺序后挪到首个可用时段。
+// 限制：最多迭代 N 轮以避免极端形状导致死循环。
+$("#autoFitBtn").addEventListener("click", () => {
+  if (state.tasks.length === 0) { setStatus("当前没有任务可调整"); return; }
+  const before = summarize();
+  if (before.overCount === 0) { setStatus("当前没有超配任务，无需调整"); return; }
+
+  pushHistory("自动调整");
+
+  let moved = 0;
+  const MAX_ROUNDS = 6;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const sorted = [...state.tasks].sort((a, b) => a.start - b.start);
+    let dirty = false;
+    for (const t of sorted) {
+      const dur = t.end - t.start;
+      const res = checkOverQuota(t.start, t.end, t.gpus, t.id);
+      if (!res.over) continue;
+      // 找一个最早可放下的位置（从 t.start 起）
+      const slots = suggestSlots(t.gpus, dur, 5);
+      // 优先选 start >= 原起点的最早 slot；若没有，则取最早一个
+      let pick = slots.find(s => s.start >= t.start) || slots[0];
+      if (!pick) continue;
+      const newStart = snap(pick.start);
+      if (Math.abs(newStart - t.start) < 60 * 1000) continue; // 没动 → 跳过避免循环
+      t.start = newStart;
+      t.end   = newStart + dur;
+      moved++;
+      dirty = true;
+    }
+    if (!dirty) break;
+    if (summarize().overCount === 0) break;
+  }
+
+  save();
+  render();
+  const after = summarize();
+  if (after.overCount === 0) {
+    setStatus(`✓ 自动调整完成：移动 ${moved} 次，超配段已全部清零`);
+  } else {
+    setStatus(`已尽力调整：移动 ${moved} 次，仍剩 ${after.overCount} 段超配（可能受配额或任务体量限制）`);
+  }
+});
+
+// 「🧹 清理过时」：删除截止时间已过的任务（end < now），可撤回
+$("#cleanDoneBtn").addEventListener("click", () => {
+  const now = Date.now();
+  const stale = state.tasks.filter(t => t.end < now);
+  if (stale.length === 0) { setStatus("当前没有过时任务"); return; }
+  if (!confirm(`将清除 ${stale.length} 个截止时间已过的任务，可通过撤回（⌘/Ctrl+Z）恢复。确认继续？`)) return;
+  pushHistory(`清理过时任务 ×${stale.length}`);
+  const staleIds = new Set(stale.map(t => t.id));
+  state.tasks = state.tasks.filter(t => !staleIds.has(t.id));
+  if (state.selectedId && staleIds.has(state.selectedId)) state.selectedId = null;
+  state.selectedIds = (state.selectedIds || []).filter(id => !staleIds.has(id));
+  save(); render();
+  setStatus(`已清理 ${stale.length} 个过时任务（可撤回）`);
+});
 
 function fitToTasks() {
   state.rangeStart = state.rangeEnd = null;
@@ -2815,7 +3200,20 @@ $("#clearBtn").addEventListener("click", () => {
 document.addEventListener("keydown", (e) => {
   if ($("#modal").classList.contains("show")) {
     if (e.key === "Escape") closeModal();
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveModal();
+    else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveModal();
+    }
+    else if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+      // 编辑面板里直接回车 = 保存（避开日期选择器打开的状态，避免误触）
+      if (typeof activeDP !== "undefined" && activeDP) return;
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "TEXTAREA") return;
+      // IME 组词阶段不触发保存
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      saveModal();
+    }
     return;
   }
   // Redo: ⌘/Ctrl + Shift + Z  (also covers Windows convention)
@@ -2861,11 +3259,33 @@ document.addEventListener("keydown", (e) => {
     // 右键菜单优先：如果在显示状态，仅由专门的处理器关闭它，不再清选中
     if ($("#ctxMenu").classList.contains("show")) return;
     if (state.pendingDeleteId) { clearPendingDelete(); setStatus("已取消删除"); }
-    else if (state.selectedId) { clearSelection(); setStatus("已取消选中"); }
+    else if (state.selectedId || state.selectedIds.length > 0) { clearSelection(); setStatus("已取消选中"); }
     return;
   }
-  if ((e.key === "Backspace" || e.key === "Delete") && state.selectedId) {
+  if ((e.key === "Backspace" || e.key === "Delete") && (state.selectedId || state.selectedIds.length > 0)) {
     e.preventDefault();
+    // 多选场景：第一次按下进入「全部 pending」，再按一次确认批量删除
+    if (state.selectedIds.length > 1) {
+      if (state.pendingDeleteId === "__multi__") {
+        const ids = [...state.selectedIds];
+        pushHistory(`批量删除 ${ids.length} 个任务`);
+        state.tasks = state.tasks.filter(x => !ids.includes(x.id));
+        state.selectedId = null;
+        state.selectedIds = [];
+        clearPendingDelete();
+        save(); render();
+        setStatus(`已删除 ${ids.length} 个任务`);
+      } else {
+        state.pendingDeleteId = "__multi__";
+        setStatus(`再按一次 ⌫ 删除选中的 ${state.selectedIds.length} 个任务（1.8 秒内）。Esc 取消`);
+        if (pendingDeleteTimer) clearTimeout(pendingDeleteTimer);
+        pendingDeleteTimer = setTimeout(() => {
+          clearPendingDelete();
+          setStatus("已取消批量删除");
+        }, 1800);
+      }
+      return;
+    }
     if (state.pendingDeleteId === state.selectedId) {
       // second press → confirm delete
       deleteTaskById(state.selectedId);
@@ -2883,16 +3303,95 @@ window.addEventListener("resize", () => render());
 // should clear the current selection. We listen on document and walk up
 // from the click target to look for a `.task-bar`.
 document.addEventListener("mousedown", (e) => {
-  if (!state.selectedId && !state.pendingDeleteId) return;
+  if (!state.selectedId && !state.pendingDeleteId && state.selectedIds.length === 0) return;
   // ignore clicks inside the modal / sidebar list / toolbar buttons
   if (e.target.closest(".task-bar")) return;
   if (e.target.closest(".task-item")) return;
   if (e.target.closest(".modal")) return;
   if (e.target.closest(".sync-popover")) return;
   if (e.target.closest("#ctxMenu")) return;
+  if (e.target.closest(".tip-box")) return;
+  if (e.target.closest(".tip-toggle")) return;
+  // canvasWrap 上的 mousedown 由 marquee 框选自行处理（按住 shift/cmd 表示加选）
+  if (e.target.closest("#canvasWrap")) return;
   if (e.target.closest("button, select, input, textarea, label")) return;
   clearSelection();
 });
+
+// ============== Marquee selection on gantt area ==============
+// 在甘特图空白处按下并拖动，画出选择框；松手后将完全相交的 task-bar 加入多选。
+// 按住 Shift / Cmd / Ctrl 表示在原选区基础上「合并」，否则先清空再选。
+let isMarqueeing = false;
+(() => {
+  let active = false, additive = false;
+  let startX = 0, startY = 0;       // viewport
+  let preIds = [];                   // additive 模式下的已有选中
+  let marqueeEl = null;
+
+  canvasWrap.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(".task-bar")) return;
+    if (e.target.closest(".resize-handle")) return;
+    // 点击在画布内部空白处才进入 marquee
+    if (!e.target.closest("#ganttArea") && !e.target.closest("#canvasInner")) return;
+    // 但避免落在 timeline-header（已绑定 panning）
+    if (e.target.closest("#timelineHeader")) return;
+    // util-section 内允许，但效果较弱；也允许进入 marquee
+    active = true;
+    additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    startX = e.clientX;
+    startY = e.clientY;
+    preIds = additive ? [...state.selectedIds] : [];
+    if (!additive) clearSelection();
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!active) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!isMarqueeing && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+      isMarqueeing = true;
+      hideTip();
+      hideCursorTime();
+      marqueeEl = document.createElement("div");
+      marqueeEl.className = "marquee";
+      document.body.appendChild(marqueeEl);
+    }
+    if (!isMarqueeing) return;
+    const x = Math.min(startX, e.clientX);
+    const y = Math.min(startY, e.clientY);
+    const w = Math.abs(dx);
+    const h = Math.abs(dy);
+    marqueeEl.style.left   = x + "px";
+    marqueeEl.style.top    = y + "px";
+    marqueeEl.style.width  = w + "px";
+    marqueeEl.style.height = h + "px";
+    // 实时计算相交的 task-bar
+    const hits = [];
+    const bars = ganttArea.querySelectorAll(".task-bar");
+    bars.forEach(b => {
+      const r = b.getBoundingClientRect();
+      const intersect = !(r.right < x || r.left > x + w || r.bottom < y || r.top > y + h);
+      if (intersect) hits.push(b.dataset.id);
+    });
+    const merged = additive ? [...new Set([...preIds, ...hits])] : hits;
+    setSelection(merged);
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!active) return;
+    active = false;
+    if (isMarqueeing) {
+      isMarqueeing = false;
+      if (marqueeEl) { marqueeEl.remove(); marqueeEl = null; }
+      const n = state.selectedIds.length;
+      if (n === 0)      setStatus("框选未命中任何任务");
+      else if (n === 1) setStatus(`已选中 1 个任务`);
+      else              setStatus(`已多选 ${n} 个任务（拖动其中任一可整组平移）`);
+    }
+  });
+})();
 
 // ============== Clipboard (copy / paste / duplicate task) ==============
 // 内存中的剪贴板，仅本会话有效。粘贴时自动在「鼠标位置」或「最早可用空闲时段」插入。
@@ -2963,6 +3462,8 @@ function duplicateSelectedTask() {
 const cursorLine = $("#cursorLine");
 const cursorTimeLabel = $("#cursorTimeLabel");
 function updateCursorTime(e) {
+  // 拖动 task-bar 期间不显示游标线和时间标签
+  if (isDraggingBar) { hideCursorTime(); return; }
   const rect = canvasInner.getBoundingClientRect();
   const x = e.clientX - rect.left;
   if (x < 0 || x > canvasInner.clientWidth) {
@@ -3005,8 +3506,11 @@ function hideCursorTime() {
   cursorTimeLabel.classList.remove("show");
 }
 canvasWrap.addEventListener("mousemove", (e) => {
-  // 在 modal/contextmenu 打开时不显示
+  // 在 modal/contextmenu/marquee 框选/拖动 bar 时不显示
   if ($("#modal").classList.contains("show")) { hideCursorTime(); return; }
+  if (ctxMenu && ctxMenu.classList.contains("show")) { hideCursorTime(); return; }
+  if (isDraggingBar) { hideCursorTime(); return; }
+  if (isMarqueeing) { hideCursorTime(); return; }
   updateCursorTime(e);
 });
 canvasWrap.addEventListener("mouseleave", hideCursorTime);
@@ -3018,6 +3522,9 @@ let ctxTargetTaskId = null;
 let ctxTargetTime = null; // 右键时鼠标对应的时间戳（用于"粘贴到此处"）
 
 function openContextMenu(e, opts) {
+  // 打开菜单时，先隐藏可能仍在显示的悬浮提示与时间游标
+  hideTip();
+  hideCursorTime();
   ctxTargetTaskId = opts.taskId || null;
   ctxTargetTime   = opts.time   || null;
   // 更新各项可用状态
@@ -3057,7 +3564,14 @@ canvasWrap.addEventListener("contextmenu", (e) => {
   let time   = null;
   if (bar) {
     taskId = bar.dataset.id;
-    selectTask(taskId);
+    // 如果该 bar 已在多选集合内，保留多选；否则收敛为单选
+    if (!state.selectedIds.includes(taskId)) {
+      selectTask(taskId);
+    } else if (state.selectedId !== taskId) {
+      state.selectedId = taskId;
+      renderSidebar();
+      renderGanttSelection();
+    }
   } else {
     // 推算时间
     const rect = canvasInner.getBoundingClientRect();
@@ -3532,6 +4046,75 @@ window.addEventListener("resize", () => {
   }
   requestAnimationFrame(render);
 });
+
+// ============== 操作提示消息框 ==============
+// 右下角的小卡片，定时随机切换提示文案；用户可关闭，状态写入 localStorage 并跨会话保持。
+(() => {
+  const TIP_KEY = "gpu_board_tipbox_on";   // "1" / "0"
+  const ROTATE_MS = 9000;
+  const TIPS = [
+    "按住 <kbd>⇧ Shift</kbd> 或 <kbd>⌘ Cmd</kbd>/<kbd>Ctrl</kbd> 点击任务，可<b>多选</b>。",
+    "在甘特图<b>空白处按住拖动</b>可框选多个任务；按住 <kbd>⇧ Shift</kbd> 拖动则在已选基础上加选。",
+    "选中多个任务后，<b>拖动其中任一</b>就能整组同步平移；过程中允许暂时超限。",
+    "整组平移如果撞到配额？点击工具栏的 <kbd>⚙ 自动调整</kbd>，把超配任务自动后挪。",
+    "右键点击空白处可<b>新建任务</b>或<b>粘贴到此处</b>；右键点击任务条则有「编辑/复制/删除」。",
+    "选中任务后连按两次 <kbd>⌫</kbd> 删除（Mac 友好）；多选时也支持<b>批量删除</b>。",
+    "<kbd>⌘/Ctrl</kbd>+<kbd>C</kbd> 复制 → <kbd>⌘/Ctrl</kbd>+<kbd>V</kbd> 粘贴。粘贴会落在鼠标当前 X 对应的时间。",
+    "<kbd>⌘/Ctrl</kbd>+<kbd>D</kbd> 在原任务结束之后<b>原地复制一份</b>，自动错开。",
+    "<kbd>Ctrl/⌘</kbd>+滚轮可<b>缩放时间轴</b>，鼠标所指时间会保持在原位。",
+    "拖动<b>时间轴上方</b>可以左右平移视图（手感像 Figma）。",
+    "拖动任务条左/右<b>边缘</b>可调整时长；中间整体拖动平移。",
+    "工具栏 <kbd>适应任务</kbd> 一键缩放到所有任务的范围。",
+    "<kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> 撤回，<kbd>⌘/Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>Z</kbd> 重做。",
+    "鼠标放在任务条上能看到<b>详情悬浮</b>；放在柱状图上可看出每段空闲卡数。",
+    "新建任务时，「智能推荐时段」会列出最早可用的几段空闲时间。",
+    "把数据文件放在 iCloud / OneDrive / Dropbox 目录绑定，可<b>多设备同步</b>。",
+  ];
+
+  const box      = document.getElementById("tipBox");
+  const body     = document.getElementById("tipBody");
+  const closeBtn = document.getElementById("tipClose");
+  const nextBtn  = document.getElementById("tipNext");
+  const toggle   = document.getElementById("tipToggle");
+  if (!box || !body || !closeBtn || !nextBtn || !toggle) return;
+
+  let idx = Math.floor(Math.random() * TIPS.length);
+  let timer = null;
+
+  function pick() { idx = (idx + 1 + Math.floor(Math.random() * (TIPS.length - 1))) % TIPS.length; }
+  function paint() { body.innerHTML = TIPS[idx]; }
+  function start() {
+    paint();
+    if (timer) clearInterval(timer);
+    timer = setInterval(() => { pick(); paint(); }, ROTATE_MS);
+  }
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function setOn(on, persist = true) {
+    if (on) {
+      box.classList.add("show");
+      toggle.classList.add("hidden-by-box");
+      toggle.title = "关闭操作提示";
+      start();
+    } else {
+      box.classList.remove("show");
+      toggle.classList.remove("hidden-by-box");
+      toggle.title = "打开操作提示";
+      stop();
+    }
+    if (persist) localStorage.setItem(TIP_KEY, on ? "1" : "0");
+  }
+
+  closeBtn.addEventListener("click", () => setOn(false));
+  toggle.addEventListener("click",  () => setOn(true));
+  nextBtn.addEventListener("click", () => { pick(); paint(); });
+
+  // 初始：默认开启；如果用户曾关过则保持关闭
+  const stored = localStorage.getItem(TIP_KEY);
+  setOn(stored === null ? true : stored === "1", false);
+})();
 </script>
 </body>
 </html>
