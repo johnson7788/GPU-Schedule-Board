@@ -897,6 +897,51 @@
     border-bottom-width: 2px; border-radius: 3px;
     padding: 0 4px; font-size: 10px; font-family: monospace;
   }
+
+  /* ============== 触摸 / 手机端适配 ==============
+     - 触摸设备（pointer:coarse）：把 resize-handle 扩到 14px，便于手指捏住
+     - 任务条本体仍 touch-action:none，避免拖动时被浏览器抢去做横向滑动
+     - 画布区允许双向 touch 平移滚动（pan-x pan-y）
+  */
+  @media (pointer: coarse) {
+    .task-bar .resize-handle { width: 14px; }
+    .task-bar { min-height: 32px; }
+    .ctx-menu .ctx-item { padding: 10px 14px; font-size: 14px; }
+    button, .btn { padding: 8px 12px; font-size: 13px; }
+    .task-item { padding: 10px 12px; }
+  }
+  .task-bar { touch-action: none; }
+  .canvas-wrap { touch-action: pan-x pan-y; }
+
+  /* 窄屏：紧凑化 header / toolbar，可横向滚动 */
+  @media (max-width: 768px) {
+    header { padding: 10px 12px; gap: 10px; }
+    header h1 { font-size: 14px; }
+    header h1 .dot { width: 7px; height: 7px; }
+    .quota-config { font-size: 12px; gap: 6px; flex-wrap: wrap; }
+    .quota-config input { width: 64px; }
+    .toolbar {
+      padding: 8px 12px; gap: 6px;
+      flex-wrap: nowrap; overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .toolbar::-webkit-scrollbar { display: none; }
+    .toolbar > * { flex-shrink: 0; }
+    .toolbar .sep { margin: 0 2px; }
+    .toolbar .dt-input-wrap { width: 130px; }
+    /* 折叠 footer 装饰元素 */
+    .footer { padding: 6px 10px; font-size: 11px; flex-wrap: wrap; }
+    .legend { gap: 8px; flex-wrap: wrap; }
+    .legend span:last-child { display: none; }    /* 隐藏"提示：拖拽…" */
+    .star-hint { display: none; }
+    .footer-right { gap: 8px; }
+    /* modal 在窄屏铺满 */
+    .modal { width: 96vw !important; max-height: 92vh; }
+    .help-tip { display: none; }
+    /* 状态栏避让 */
+    .tip-box, .tip-toggle { right: 10px !important; bottom: 70px !important; max-width: calc(100vw - 24px); }
+  }
 </style>
 </head>
 <body>
@@ -1857,9 +1902,19 @@ function xToTime(x, range) {
 function snap(ms) {
   let g;
   if (state.view === "hour") g = 5 * 60 * 1000;       // 5 min
-  else if (state.view === "day") g = 30 * 60 * 1000;  // 30 min
-  else g = HOUR_MS;                                   // 1 hour
+  else if (state.view === "day") g = 10 * 60 * 1000;  // 10 min（细粒度，原 30 min）
+  else g = HOUR_MS;                                   // week 视图：1 hour（像素密度过低，保持不变）
   return Math.round(ms / g) * g;
+}
+
+// 拖拽吸附到"当前时间"：候选时间转为像素距离 now 在阈值内时吸过去
+// 阈值跟视图走（约一个 snap 网格的一半），避免 hour 视图里整段都吸住
+function snapToNow(ms) {
+  const now = Date.now();
+  const ppms = pxPerMs();
+  const SNAP_PX = 8;                                  // 像素吸附半径
+  if (Math.abs(ms - now) * ppms <= SNAP_PX) return now;
+  return ms;
 }
 
 // ============== Utilization computation ==============
@@ -2571,6 +2626,16 @@ function updateDragGuide(task, mode) {
   // resize-l: emphasize start; resize-r: emphasize end; move: both equal
   sLine.style.opacity = mode === "resize-r" ? "0.45" : "1";
   eLine.style.opacity = mode === "resize-l" ? "0.45" : "1";
+  // 吸附到当前时间的视觉提示：snapToNow 命中时 task.start/end 严格等于 now
+  // 由于 mousemove 内连续调用 snapToNow(Date.now())，命中时差值会落在 ms 抖动范围内
+  // 这里改用宽松判断：与 now 误差 < 500ms 视为吸附
+  const NOW = Date.now();
+  const stickS = Math.abs(task.start - NOW) < 500;
+  const stickE = Math.abs(task.end - NOW) < 500;
+  if (stickS) { sLbl.textContent += " · 现在"; sLine.style.borderColor = "#d29922"; }
+  else { sLine.style.borderColor = ""; }
+  if (stickE) { eLbl.textContent += " · 现在"; eLine.style.borderColor = "#d29922"; }
+  else { eLine.style.borderColor = ""; }
 }
 function hideDragGuide() {
   if (!_dragGuideEls) return;
@@ -2587,10 +2652,20 @@ function attachBarHandlers(bar, task) {
   let historyPushed = false;
   // 批量拖动用：被一同移动的任务 + 它们的初始时间
   let batchTasks = null;       // [{task, origStart, origEnd}]
+  // long-press 模拟右键：触摸时按住 500ms 唤出 ctxMenu
+  let lpTimer = null;
+  let lpFired = false;
+  let lpStartX = 0, lpStartY = 0;
 
-  const onMouseDown = (e) => {
+  const cancelLongPress = () => {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  };
+
+  const onPointerDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // 仅响应主指针（鼠标左键 / 第一根手指 / 笔尖）
+    if (e.button != null && e.button !== 0 && e.pointerType !== "touch") return;
     // Shift / Cmd / Ctrl 点击：切换多选，不进入拖动模式
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
       toggleSelectMulti(task.id);
@@ -2625,11 +2700,44 @@ function attachBarHandlers(bar, task) {
       batchTasks = null;
     }
     showDragGuide(task, mode);
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
+    // 锁定 pointer capture，避免手指滑出 bar 后失联
+    if (bar.setPointerCapture && e.pointerId != null) {
+      try { bar.setPointerCapture(e.pointerId); } catch {}
+    }
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerUp);
+
+    // 触摸 long-press：500ms 内若几乎没有移动则模拟右键
+    if (e.pointerType === "touch") {
+      lpFired = false;
+      lpStartX = e.clientX; lpStartY = e.clientY;
+      cancelLongPress();
+      lpTimer = setTimeout(() => {
+        lpFired = true;
+        // 取消拖拽语义
+        bar.classList.remove("dragging");
+        isDraggingBar = false;
+        hideDragGuide();
+        mode = null;
+        batchTasks = null;
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        document.removeEventListener("pointercancel", onPointerUp);
+        // 弹 ctxMenu（伪造一个带 clientX/Y 的事件对象）
+        openContextMenu({ clientX: lpStartX, clientY: lpStartY }, { taskId: task.id, time: null });
+        // 触觉反馈
+        if (navigator.vibrate) try { navigator.vibrate(15); } catch {}
+      }, 500);
+    }
   };
-  const onMouseMove = (e) => {
+  const onPointerMove = (e) => {
     const dx = e.clientX - startX;
+    // long-press 期间，若移动超阈值则取消
+    if (lpTimer) {
+      const moved = Math.hypot(e.clientX - lpStartX, e.clientY - lpStartY);
+      if (moved > 6) cancelLongPress();
+    }
     const dms = dx / pxPerMs();
     if (Math.abs(dx) > 2 && !historyPushed) {
       // first significant drag → snapshot prior state
@@ -2642,7 +2750,10 @@ function attachBarHandlers(bar, task) {
     if (mode === "move") {
       if (batchTasks && batchTasks.length > 1) {
         // 批量拖动：每个任务按各自起点 + 同样的 dms 平移；不做避让 / 不限制超限
-        const snappedDms = snap(batchTasks[0].origStart + dms) - batchTasks[0].origStart;
+        // 以"龙头任务"的起点对齐网格 / 吸附 now，整批沿用同样的偏移
+        const headRaw = batchTasks[0].origStart + dms;
+        const headSnapped = snapToNow(snap(headRaw));
+        const snappedDms = headSnapped - batchTasks[0].origStart;
         for (const it of batchTasks) {
           const dur = it.origEnd - it.origStart;
           it.task.start = it.origStart + snappedDms;
@@ -2650,18 +2761,20 @@ function attachBarHandlers(bar, task) {
         }
       } else {
         const dur = origEnd - origStart;
-        task.start = snap(origStart + dms);
+        task.start = snapToNow(snap(origStart + dms));
         task.end = task.start + dur;
       }
     } else if (mode === "resize-l") {
-      task.start = snap(Math.min(origEnd - 5 * 60 * 1000, origStart + dms));
+      task.start = snapToNow(snap(Math.min(origEnd - 5 * 60 * 1000, origStart + dms)));
     } else if (mode === "resize-r") {
-      task.end = snap(Math.max(origStart + 5 * 60 * 1000, origEnd + dms));
+      task.end = snapToNow(snap(Math.max(origStart + 5 * 60 * 1000, origEnd + dms)));
     }
     render();
     updateDragGuide(task, mode);
   };
-  const onMouseUp = () => {
+  const onPointerUp = (e) => {
+    cancelLongPress();
+    if (lpFired) { lpFired = false; return; }   // long-press 已经把状态清掉了
     bar.classList.remove("dragging");
     hideDragGuide();
     isDraggingBar = false;
@@ -2679,10 +2792,11 @@ function attachBarHandlers(bar, task) {
     }
     mode = null;
     batchTasks = null;
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+    document.removeEventListener("pointercancel", onPointerUp);
   };
-  bar.addEventListener("mousedown", onMouseDown);
+  bar.addEventListener("pointerdown", onPointerDown);
   bar.addEventListener("dblclick", () => openModal(task.id));
   bar.addEventListener("mousemove", (e) => {
     if (mode || isDraggingBar) return;
@@ -2708,7 +2822,8 @@ function openModal(id) {
   $("#fName").value = t ? t.name : "";
   $("#fGpus").value = t ? t.gpus : 8;
   const now = Date.now();
-  const def_s = t ? t.start : Math.floor(now / HOUR_MS) * HOUR_MS;
+  // 默认开始时间 = 当前时间（向上对齐到 1 分钟，避免出现秒级抖动），而不是取整到整点
+  const def_s = t ? t.start : Math.ceil(now / 60000) * 60000;
   const def_e = t ? t.end : def_s + 4 * HOUR_MS;
   $("#fStart").value = toLocalInput(def_s);
   $("#fEnd").value = toLocalInput(def_e);
@@ -3584,6 +3699,41 @@ canvasWrap.addEventListener("contextmenu", (e) => {
   openContextMenu(e, { taskId, time });
 });
 
+// 触摸 long-press 在画布空白处弹出右键菜单（500ms 不动 → 当作右键）
+(function attachCanvasLongPress() {
+  let timer = null, startX = 0, startY = 0, fired = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  canvasWrap.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    if (e.target.closest(".task-bar")) return;        // 任务条自己处理
+    if (e.target.closest("#ctxMenu")) return;
+    fired = false;
+    startX = e.clientX; startY = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      fired = true;
+      // 推算时间
+      const rect = canvasInner.getBoundingClientRect();
+      const x = startX - rect.left;
+      let time = null;
+      if (x >= 0 && x <= canvasInner.clientWidth) {
+        const range = computeRange();
+        time = snap(xToTime(x, range));
+      }
+      openContextMenu({ clientX: startX, clientY: startY }, { taskId: null, time });
+      if (navigator.vibrate) try { navigator.vibrate(15); } catch {}
+    }, 500);
+  });
+  canvasWrap.addEventListener("pointermove", (e) => {
+    if (!timer) return;
+    const moved = Math.hypot(e.clientX - startX, e.clientY - startY);
+    if (moved > 6) cancel();
+  });
+  canvasWrap.addEventListener("pointerup", cancel);
+  canvasWrap.addEventListener("pointercancel", cancel);
+  canvasWrap.addEventListener("scroll", cancel);
+})();
+
 // 任务列表也支持右键
 $("#taskList").addEventListener("contextmenu", (e) => {
   const item = e.target.closest(".task-item");
@@ -3613,8 +3763,8 @@ ctxMenu.addEventListener("click", (e) => {
     case "delete":    if (tid) deleteTaskById(tid); break;
   }
 });
-// 任意位置点击/Esc/滚动 → 关闭
-document.addEventListener("mousedown", (e) => {
+// 任意位置点击/Esc/滚动 → 关闭（用 pointerdown 兼容触摸）
+document.addEventListener("pointerdown", (e) => {
   if (!ctxMenu.classList.contains("show")) return;
   if (e.target.closest("#ctxMenu")) return;
   closeContextMenu();
@@ -3683,6 +3833,36 @@ canvasWrap.addEventListener("gesturechange", (e) => {
   zoomAt(cx, factor);
 });
 canvasWrap.addEventListener("gestureend", (e) => e.preventDefault());
+
+// Android / 通用：双指 touch 缩放（gesturestart 仅 Safari 支持）
+(function attachTouchPinch() {
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+  let pinching = false;
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  canvasWrap.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      pinching = true;
+      pinchStartDist = dist(e.touches[0], e.touches[1]);
+      pinchStartZoom = state.zoom;
+      e.preventDefault();
+    }
+  }, { passive: false });
+  canvasWrap.addEventListener("touchmove", (e) => {
+    if (!pinching || e.touches.length !== 2) return;
+    e.preventDefault();
+    const d = dist(e.touches[0], e.touches[1]);
+    if (pinchStartDist <= 0) return;
+    const target = clamp(pinchStartZoom * (d / pinchStartDist), 0.15, 16);
+    if (Math.abs(target - state.zoom) < 1e-3) return;
+    const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const factor = target / state.zoom;
+    zoomAt(cx, factor);
+  }, { passive: false });
+  const stop = () => { pinching = false; pinchStartDist = 0; };
+  canvasWrap.addEventListener("touchend", stop);
+  canvasWrap.addEventListener("touchcancel", stop);
+})();
 
 // ============== Drag the timeline header to pan horizontally ==============
 // Press-and-drag anywhere on the timeline strip to scroll the canvas left/right.
