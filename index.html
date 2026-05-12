@@ -968,6 +968,9 @@
           <span id="syncStatusText">未绑定文件</span>
         </div>
         <div class="sp-file" id="syncFileName">本地数据（未启用同步）</div>
+        <div class="sp-row" id="syncDemoBanner" style="display:none;background:#fff4d6;color:#7a5b00;border:1px solid #e7d28a;border-radius:6px;padding:6px 8px;font-size:11px;line-height:1.5">
+          ⚠️ 当前是首次进入的<b>示例数据</b>。如要从其它设备同步，请用「导入并绑定」选择已存在的 JSON 文件——绝不会被本地示例覆盖。
+        </div>
         <div class="sp-row" id="syncMetaRow" style="color:var(--muted);font-size:11px;display:none">
           <span id="syncLastTime">上次同步：—</span>
         </div>
@@ -1208,6 +1211,7 @@ const state = {
   rangeStart: null,   // ms
   rangeEnd: null,
   updatedAt: 0,       // ms epoch — bumped on every save() for cloud sync
+  isDemo: false,      // true = 首次进入由 seedDemoData() 灌的示例数据；任何真实修改后清零
 };
 let pendingDeleteTimer = null;
 
@@ -1241,8 +1245,10 @@ function save(opts) {
   // Bump timestamp on every real write so the cloud-sync layer can resolve conflicts.
   // Pass {silent:true} for snapshots restored from a remote pull (avoid bumping).
   if (!opts || !opts.silent) state.updatedAt = Date.now();
+  // 只要发生过真实保存（非 silent / 非 demo seeding），就摘掉 demo 标签
+  if (!opts || (!opts.silent && !opts.demo)) state.isDemo = false;
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt
+    quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt, isDemo: state.isDemo
   }));
   if (!opts || !opts.silent) scheduleCloudPush();
 }
@@ -1470,6 +1476,7 @@ function load() {
     state.quota = data.quota ?? 64;
     state.tasks = (data.tasks || []).map(t => ({...t}));
     state.updatedAt = data.updatedAt || 0;
+    state.isDemo = !!data.isDemo;
     return true;
   } catch(e) { return false; }
 }
@@ -1586,6 +1593,8 @@ function refreshSyncPopover() {
   }
   pull.disabled = !has; push.disabled = !has; unbind.disabled = !has;
   bind.textContent = has ? "↻ 更换文件…" : "⬇ 导入并绑定";
+  const demoBanner = $get("syncDemoBanner");
+  if (demoBanner) demoBanner.style.display = state.isDemo ? "block" : "none";
   // Title on the header button
   const btn = $get("syncBtn");
   if (btn) {
@@ -1645,12 +1654,50 @@ async function createSyncFile() {
       setSyncStatus("err", "未授权写入");
       return;
     }
+    // 安全护栏：showSaveFilePicker 选到的可能是一个已存在文件（多设备同步场景常见）
+    // 在覆盖之前先读一次，如果远端已有有效任务，**绝不覆盖**——改走"导入"语义
+    let remote = null;
+    try {
+      const file = await handle.getFile();
+      const txt = await file.text();
+      if (txt.trim()) remote = JSON.parse(txt);
+    } catch (_) { /* 不存在或损坏，继续按新建处理 */ }
+
     sync.handle = handle;
     sync.fileName = handle.name;
     await dbPutHandle(handle);
-    // Always push current local snapshot into the new file.
-    const ts = state.updatedAt || Date.now();
+
+    if (remote && Array.isArray(remote.tasks) && remote.tasks.length > 0) {
+      // 文件里已经有真实数据，转走 initial merge（=拉远端覆盖本地）
+      await syncMergeFromFile({ initial: true });
+      if (sync.status !== "err") {
+        setSyncStatus("ok");
+        setStatus(`所选文件已包含 ${remote.tasks.length} 个任务，已从云端导入（未覆盖）`);
+      }
+      startSyncPolling();
+      return;
+    }
+
+    // 远端为空 / 不存在 — 这才是真"新建"。但本地若是 demo，二次确认避免污染
+    if (state.isDemo) {
+      const ok = confirm(
+        `当前本地是首次访问的示例数据（${state.tasks.length} 个示例任务）。\n\n` +
+        `继续【新建并绑定】会把这些示例写入文件「${handle.name}」。\n\n` +
+        `若你打算从其它设备同步过来，请改用【导入并绑定】或先在此设备录入真实任务。\n\n` +
+        `仍要把示例数据写入并绑定吗？`
+      );
+      if (!ok) {
+        await dbDelHandle();
+        sync.handle = null; sync.fileName = "";
+        setSyncStatus("off");
+        setStatus("已取消绑定（未写入文件）");
+        return;
+      }
+    }
+
+    const ts = Date.now();
     state.updatedAt = ts;
+    state.isDemo = false; // 用户确认推送 = 视为真实数据
     await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: ts });
     sync.lastPushAt = Date.now();
     save({ silent: true });
@@ -1715,12 +1762,26 @@ async function syncMergeFromFile(opts) {
         state.quota = remote.quota ?? state.quota;
         state.tasks = remote.tasks;
         state.updatedAt = remoteTs || Date.now();
+        state.isDemo = false; // 已被真实数据替换
         save({ silent: true });
         render();
         sync.lastPullAt = Date.now();
         setStatus(`已从云端导入（${state.tasks.length} 任务）`);
       } else {
-        // 远端为空 — 询问是否把当前本地状态写入这个文件
+        // 远端为空 — 本地若仍是 demo，直接拒绝（防止把示例数据污染同步文件）
+        if (state.isDemo) {
+          alert(
+            `所选文件「${sync.fileName}」内容为空，且当前本地是首次访问的示例数据。\n\n` +
+            `为防止覆盖你在其它设备上的真实数据，本次绑定已取消。\n\n` +
+            `若确认要从此设备初始化同步，请先点击【新建并绑定】并在确认框中确认。`
+          );
+          await dbDelHandle();
+          sync.handle = null; sync.fileName = "";
+          setSyncStatus("off");
+          setStatus("已取消绑定（远端为空 + 本地为示例数据）");
+          return;
+        }
+        // 远端为空，但本地是用户真实数据 — 询问确认
         const ok = confirm(
           `所选文件「${sync.fileName}」内容为空。\n\n` +
           `是否把当前本地数据（${state.tasks.length} 任务）写入并绑定？\n\n` +
@@ -1743,7 +1804,11 @@ async function syncMergeFromFile(opts) {
 
     // 非首次：常规 last-write-wins
     if (!remote || !Array.isArray(remote.tasks)) {
-      // remote is empty/invalid — push current local snapshot
+      // remote is empty/invalid — push current local snapshot, but never push demo seed
+      if (state.isDemo) {
+        setSyncStatus("ok");
+        return;
+      }
       await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
       sync.lastPushAt = Date.now();
     } else if (remoteTs > localTs) {
@@ -1773,6 +1838,7 @@ async function syncMergeFromFile(opts) {
 
 function scheduleCloudPush() {
   if (!sync.handle) return;
+  if (state.isDemo) return; // 永远不把示例数据推到云端
   if (sync.pushTimer) clearTimeout(sync.pushTimer);
   setSyncStatus("busy");
   sync.pushTimer = setTimeout(async () => {
@@ -1862,7 +1928,10 @@ function seedDemoData() {
       color: COLORS[(i + rand(0, COLORS.length - 1)) % COLORS.length],
     };
   });
-  save();
+  state.isDemo = true;
+  // demo 数据用极小时间戳：万一被错误地比对，永远输给真实数据
+  state.updatedAt = 1;
+  save({ silent: true, demo: true });
 }
 
 // ============== Range Computation ==============
@@ -3267,6 +3336,10 @@ $("#syncCreateBtn").addEventListener("click", () => createSyncFile());
 $("#syncPullBtn").addEventListener("click", () => sync.handle && syncMergeFromFile({}));
 $("#syncPushBtn").addEventListener("click", async () => {
   if (!sync.handle) return;
+  if (state.isDemo) {
+    if (!confirm(`当前本地仍为首次访问的示例数据（${state.tasks.length} 个示例任务）。\n推送会覆盖云端文件。确认推送吗？`)) return;
+    state.isDemo = false;
+  }
   setSyncStatus("busy");
   try {
     if (!(await ensureRwPermission(sync.handle))) { setSyncStatus("err", "权限被撤销"); return; }
