@@ -384,6 +384,14 @@
     background: rgba(63, 185, 80, 0.12); color: var(--ok);
     font-weight: 600; font-size: 11px;
   }
+  /* 侧栏的任务类型 / benchmark 小标签 */
+  .task-meta .meta-tag {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 500;
+    border: 1px solid var(--border);
+  }
+  .task-meta .meta-tag.type { background: var(--panel-2); color: var(--text); }
+  .task-meta .meta-tag.bm { background: rgba(88, 166, 255, 0.10); color: var(--accent); border-color: rgba(88, 166, 255, 0.35); }
   .task-bar.multi-selected {
     box-shadow: 0 0 0 2px var(--accent);
   }
@@ -575,6 +583,19 @@
   .task-bar .resize-handle.right { right: 0; }
   .task-bar .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .task-bar .gpu { font-size: 11px; opacity: 0.85; flex-shrink: 0; }
+  /* 任务条上的小标签：任务类型 / benchmark */
+  .task-bar .tag {
+    flex-shrink: 0;
+    font-size: 10px; line-height: 1;
+    padding: 2px 5px; border-radius: 8px;
+    background: rgba(0,0,0,0.18);
+    border: 1px solid rgba(255,255,255,0.18);
+    white-space: nowrap;
+    max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .task-bar .tag.type { background: rgba(0,0,0,0.28); }
+  /* 极窄任务条上隐藏标签，避免溢出 */
+  .task-bar.narrow .tag { display: none; }
 
   .now-line {
     position: absolute; top: 0; bottom: 0;
@@ -1137,13 +1158,10 @@
         <input type="text" id="fName" placeholder="例：训练任务 v3" />
       </div>
       <div class="form-row">
-        <label>Benchmark <span class="bm-hint" style="color:var(--muted);font-weight:normal;font-size:11px">（可选，记录后会按卡数估算时长）</span></label>
+        <label>任务类型 / Benchmark <span class="bm-hint" style="color:var(--muted);font-weight:normal;font-size:11px">（均可选；下拉末两项可新建 / 删除）</span></label>
         <div class="bm-row">
-          <select id="fBenchmark" class="bm-select">
-            <option value="">— 不选 —</option>
-          </select>
-          <button type="button" id="bmAddBtn" class="ghost bm-btn" title="新建一个 Benchmark 名称">＋ 新建</button>
-          <button type="button" id="bmDelBtn" class="ghost bm-btn danger" title="删除当前选中的 Benchmark（含其历史时长记录）">🗑 删除</button>
+          <select id="fTaskType" class="bm-select" title="任务类型"></select>
+          <select id="fBenchmark" class="bm-select" title="Benchmark（可选，会按卡数记录历史时长）"></select>
         </div>
       </div>
       <div class="form-row">
@@ -1253,7 +1271,7 @@ const DAY_MS = 24 * HOUR_MS;
 
 const state = {
   quota: 64,
-  tasks: [],          // {id,name,start,end,gpus,color,benchmark?}
+  tasks: [],          // {id,name,start,end,gpus,color,benchmark?,taskType?}
   // Benchmark 历史时长记录: { "SuperGPQA": { 32: 43, 64: 36 }, ... }
   // 单位：小时。每次保存任务时若选了 benchmark 则更新对应卡数的最近一次时长。
   benchmarks: {
@@ -1262,6 +1280,8 @@ const state = {
     "GPQA-diamond": {},
     "SuperGPQA": {},
   },
+  // 任务类型字典：用户可在 modal 里通过 select 自带的"新建/删除"项编辑
+  taskTypes: ["评估", "训练", "其他"],
   selectedId: null,
   selectedIds: [],    // 多选集合，selectedId 始终包含其中（作为「主选中」）
   pendingDeleteId: null, // id awaiting second-press confirmation
@@ -1309,6 +1329,7 @@ function save(opts) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt, isDemo: state.isDemo,
     benchmarks: state.benchmarks,
+    taskTypes: state.taskTypes,
   }));
   if (!opts || !opts.silent) scheduleCloudPush();
 }
@@ -1328,7 +1349,7 @@ let suppressRedoClear = false; // set true when pushing from undo() so we keep r
 let depthHideTimer = null;
 
 function snapshotState() {
-  return JSON.parse(JSON.stringify({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks }));
+  return JSON.parse(JSON.stringify({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes }));
 }
 function pushHistory(label) {
   historyStack.push({ label: label || "操作", snapshot: snapshotState() });
@@ -1354,6 +1375,7 @@ function undo() {
   state.quota = snapshot.quota;
   state.tasks = snapshot.tasks;
   if (snapshot.benchmarks) state.benchmarks = snapshot.benchmarks;
+  if (snapshot.taskTypes) state.taskTypes = snapshot.taskTypes;
   if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
   clearPendingDelete();
   save();
@@ -1377,6 +1399,7 @@ function redo() {
   state.quota = snapshot.quota;
   state.tasks = snapshot.tasks;
   if (snapshot.benchmarks) state.benchmarks = snapshot.benchmarks;
+  if (snapshot.taskTypes) state.taskTypes = snapshot.taskTypes;
   if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
   clearPendingDelete();
   save();
@@ -1542,6 +1565,9 @@ function load() {
     if (data.benchmarks && typeof data.benchmarks === "object") {
       // merge 默认 benchmark + 已存的，保证默认四个永远在
       state.benchmarks = Object.assign({}, state.benchmarks, data.benchmarks);
+    }
+    if (Array.isArray(data.taskTypes) && data.taskTypes.length > 0) {
+      state.taskTypes = data.taskTypes.filter(x => typeof x === "string" && x.trim());
     }
     return true;
   } catch(e) { return false; }
@@ -1764,7 +1790,7 @@ async function createSyncFile() {
     const ts = Date.now();
     state.updatedAt = ts;
     state.isDemo = false; // 用户确认推送 = 视为真实数据
-    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: ts });
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: ts });
     sync.lastPushAt = Date.now();
     save({ silent: true });
     setSyncStatus("ok");
@@ -1830,6 +1856,9 @@ async function syncMergeFromFile(opts) {
         if (remote.benchmarks && typeof remote.benchmarks === "object") {
           state.benchmarks = Object.assign({}, state.benchmarks, remote.benchmarks);
         }
+        if (Array.isArray(remote.taskTypes) && remote.taskTypes.length > 0) {
+          state.taskTypes = remote.taskTypes.filter(x => typeof x === "string" && x.trim());
+        }
         state.updatedAt = remoteTs || Date.now();
         state.isDemo = false; // 已被真实数据替换
         save({ silent: true });
@@ -1864,7 +1893,7 @@ async function syncMergeFromFile(opts) {
           setStatus("已取消绑定（未写入文件）");
           return;
         }
-        await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
+        await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt || Date.now() });
         sync.lastPushAt = Date.now();
       }
       setSyncStatus("ok");
@@ -1878,7 +1907,7 @@ async function syncMergeFromFile(opts) {
         setSyncStatus("ok");
         return;
       }
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt || Date.now() });
       sync.lastPushAt = Date.now();
     } else if (remoteTs > localTs) {
       // remote wins — pull
@@ -1888,6 +1917,9 @@ async function syncMergeFromFile(opts) {
       if (remote.benchmarks && typeof remote.benchmarks === "object") {
         state.benchmarks = Object.assign({}, state.benchmarks, remote.benchmarks);
       }
+      if (Array.isArray(remote.taskTypes) && remote.taskTypes.length > 0) {
+        state.taskTypes = remote.taskTypes.filter(x => typeof x === "string" && x.trim());
+      }
       state.updatedAt = remoteTs;
       // 'silent' so we don't bump updatedAt or re-push
       save({ silent: true });
@@ -1896,7 +1928,7 @@ async function syncMergeFromFile(opts) {
       setStatus(`已从云端拉取（${state.tasks.length} 任务）`);
     } else if (localTs > remoteTs) {
       // local wins — push
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt });
       sync.lastPushAt = Date.now();
     } else {
       // same timestamp — nothing to do
@@ -1929,7 +1961,7 @@ function scheduleCloudPush() {
         await syncMergeFromFile({});
         return;
       }
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt });
       sync.lastPushAt = Date.now();
       setSyncStatus("ok");
     } catch (err) {
@@ -2338,9 +2370,13 @@ function renderGantt(range, width) {
     bar.innerHTML = `
       <div class="resize-handle left"></div>
       <span class="label">${escapeHTML(t.name)}</span>
+      ${t.taskType ? `<span class="tag type" title="任务类型">${escapeHTML(t.taskType)}</span>` : ""}
+      ${t.benchmark ? `<span class="tag" title="Benchmark">${escapeHTML(t.benchmark)}</span>` : ""}
       <span class="gpu">${t.gpus} 卡</span>
       <div class="resize-handle right"></div>
     `;
+    // 极窄条隐藏标签：宽度小于 110px 时加 .narrow
+    if (w < 110) bar.classList.add("narrow");
 
     row.appendChild(bar);
     ganttArea.appendChild(row);
@@ -2593,6 +2629,8 @@ function renderSidebar() {
         <div class="task-name">${escapeHTML(t.name)}</div>
         <div class="task-meta">
           <span class="gpu-tag">${t.gpus} 卡</span>
+          ${t.taskType ? `<span class="meta-tag type" title="任务类型">${escapeHTML(t.taskType)}</span>` : ""}
+          ${t.benchmark ? `<span class="meta-tag bm" title="Benchmark">${escapeHTML(t.benchmark)}</span>` : ""}
           ${renderTimeChip(t.start, "start")}
           <span class="time-arrow">→</span>
           ${renderTimeChip(t.end, "end")}
@@ -2944,6 +2982,8 @@ function attachBarHandlers(bar, task) {
     if (ctxMenu && ctxMenu.classList.contains("show")) return; // 右键菜单期间不显示
     showTip(e, `
       <div class="ttl">${escapeHTML(task.name)}</div>
+      ${task.taskType ? `<div class="row">类型: <b>${escapeHTML(task.taskType)}</b></div>` : ""}
+      ${task.benchmark ? `<div class="row">Benchmark: <b>${escapeHTML(task.benchmark)}</b></div>` : ""}
       <div class="row">起: <b>${fmtDateTime(task.start)}</b></div>
       <div class="row">止: <b>${fmtDateTime(task.end)}</b></div>
       <div class="row">时长: <b>${fmtDur(task.end - task.start)}</b></div>
@@ -2956,18 +2996,46 @@ function attachBarHandlers(bar, task) {
 // ============== Modal ==============
 let editingId = null;
 
+// ----- Sentinel values used inside the unified <select> for inline 新建/删除 -----
+const SENT_NEW = "__new__";
+const SENT_DEL = "__del__";
+
 // ----- Benchmark helpers -----
 function getBenchmarkNames() {
   return Object.keys(state.benchmarks || {}).sort((a, b) => a.localeCompare(b, "zh"));
 }
 
+// 一体化 select 渲染：列出条目 + 一条分隔 disabled + ＋新建 + 🗑删除当前
+function buildUnifiedSelect(sel, names, currentValue, opts) {
+  // opts: { placeholder, allowDelete }
+  const placeholder = opts.placeholder || "— 不选 —";
+  const parts = [`<option value="">${escapeHTML(placeholder)}</option>`];
+  for (const n of names) {
+    parts.push(`<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`);
+  }
+  parts.push(`<option value="" disabled>──────────</option>`);
+  parts.push(`<option value="${SENT_NEW}">＋ 新建…</option>`);
+  if (opts.allowDelete) {
+    parts.push(`<option value="${SENT_DEL}">🗑 删除当前选中…</option>`);
+  }
+  sel.innerHTML = parts.join("");
+  sel.value = currentValue && names.includes(currentValue) ? currentValue : "";
+  // 记忆"上一次有效值"，用于在用户选择 sentinel 后能回滚
+  sel.dataset.prev = sel.value;
+}
+
 function refreshBenchmarkSelect(selectedName) {
   const sel = $("#fBenchmark");
   if (!sel) return;
-  const names = getBenchmarkNames();
-  sel.innerHTML = `<option value="">— 不选 —</option>` +
-    names.map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join("");
-  sel.value = selectedName && names.includes(selectedName) ? selectedName : "";
+  buildUnifiedSelect(sel, getBenchmarkNames(), selectedName || "",
+    { placeholder: "Benchmark — 不选", allowDelete: true });
+}
+
+function refreshTaskTypeSelect(selectedType) {
+  const sel = $("#fTaskType");
+  if (!sel) return;
+  buildUnifiedSelect(sel, state.taskTypes, selectedType || "",
+    { placeholder: "任务类型 — 不选", allowDelete: true });
 }
 
 function refreshGpusHistory() {
@@ -3030,41 +3098,64 @@ function refreshGpusPresets() {
 
 function addBenchmark() {
   const name = (prompt("新建 Benchmark 名称（例如：MMLU、HumanEval）：") || "").trim();
-  if (!name) return;
+  if (!name) return null;
   if (state.benchmarks[name]) {
     alert(`「${name}」已存在`);
-    refreshBenchmarkSelect(name);
-    refreshGpusHistory();
-    refreshGpusPresets();
-    return;
+    return name;
   }
   pushHistory(`新建 Benchmark「${name}」`);
   state.benchmarks[name] = {};
   save();
-  refreshBenchmarkSelect(name);
-  refreshGpusHistory();
-  refreshGpusPresets();
   setStatus(`已新建 Benchmark：${name}`);
+  return name;
 }
 
-function deleteBenchmark() {
-  const cur = $("#fBenchmark").value;
-  if (!cur) {
-    alert("请先在下拉框选中一个 Benchmark 再删除。");
-    return;
+function deleteBenchmark(name) {
+  if (!name) {
+    alert("请先选中一个 Benchmark 再删除。");
+    return false;
   }
-  const records = Object.keys(state.benchmarks[cur] || {}).length;
-  if (!confirm(`删除 Benchmark「${cur}」？\n${records ? `将一并清除 ${records} 条历史卡数→时长记录。` : ""}\n（已绑定此 Benchmark 的任务不会被删除，仅清空其 benchmark 字段。）`)) return;
-  pushHistory(`删除 Benchmark「${cur}」`);
-  delete state.benchmarks[cur];
+  const records = Object.keys(state.benchmarks[name] || {}).length;
+  if (!confirm(`删除 Benchmark「${name}」？\n${records ? `将一并清除 ${records} 条历史卡数→时长记录。` : ""}\n（已绑定此 Benchmark 的任务不会被删除，仅清空其 benchmark 字段。）`)) return false;
+  pushHistory(`删除 Benchmark「${name}」`);
+  delete state.benchmarks[name];
   for (const t of state.tasks) {
-    if (t.benchmark === cur) delete t.benchmark;
+    if (t.benchmark === name) delete t.benchmark;
   }
   save();
-  refreshBenchmarkSelect("");
-  refreshGpusHistory();
-  refreshGpusPresets();
-  setStatus(`已删除 Benchmark：${cur}`);
+  setStatus(`已删除 Benchmark：${name}`);
+  return true;
+}
+
+function addTaskType() {
+  const name = (prompt("新建任务类型（例如：调试、推理、压测）：") || "").trim();
+  if (!name) return null;
+  if (state.taskTypes.includes(name)) {
+    alert(`「${name}」已存在`);
+    return name;
+  }
+  pushHistory(`新建任务类型「${name}」`);
+  state.taskTypes.push(name);
+  save();
+  setStatus(`已新建任务类型：${name}`);
+  return name;
+}
+
+function deleteTaskType(name) {
+  if (!name) {
+    alert("请先选中一个任务类型再删除。");
+    return false;
+  }
+  const inUse = state.tasks.filter(t => t.taskType === name).length;
+  if (!confirm(`删除任务类型「${name}」？\n${inUse ? `当前有 ${inUse} 个任务正在使用，将清空其 taskType 字段（不删除任务）。` : ""}`)) return false;
+  pushHistory(`删除任务类型「${name}」`);
+  state.taskTypes = state.taskTypes.filter(x => x !== name);
+  for (const t of state.tasks) {
+    if (t.taskType === name) delete t.taskType;
+  }
+  save();
+  setStatus(`已删除任务类型：${name}`);
+  return true;
 }
 
 function openModal(id) {
@@ -3073,7 +3164,8 @@ function openModal(id) {
   $("#modalTitle").textContent = t ? "编辑任务" : "新建任务";
   $("#fName").value = t ? t.name : "";
   $("#fGpus").value = t ? t.gpus : 8;
-  // Benchmark
+  // 任务类型 + Benchmark（一体化下拉，含新建/删除）
+  refreshTaskTypeSelect(t ? (t.taskType || "") : "");
   refreshBenchmarkSelect(t ? (t.benchmark || "") : "");
   refreshGpusHistory();
   refreshGpusPresets();
@@ -3186,18 +3278,43 @@ function attachModalLinks() {
     scheduleRecoRefresh();
   });
 
-  // benchmark 切换 → 重置 datalist + 重算历史时长提示
+  // benchmark 切换：拦截 sentinel；其它情况刷新 datalist + 预设芯片
   const bmEl = $("#fBenchmark");
   if (bmEl) {
     bmEl.addEventListener("change", () => {
+      const v = bmEl.value;
+      if (v === SENT_NEW) {
+        const created = addBenchmark();
+        refreshBenchmarkSelect(created || bmEl.dataset.prev || "");
+      } else if (v === SENT_DEL) {
+        const target = bmEl.dataset.prev || "";
+        const ok = deleteBenchmark(target);
+        refreshBenchmarkSelect(ok ? "" : target);
+      } else {
+        bmEl.dataset.prev = v;
+      }
       refreshGpusHistory();
       refreshGpusPresets();
     });
   }
-  const bmAdd = $("#bmAddBtn");
-  const bmDel = $("#bmDelBtn");
-  if (bmAdd) bmAdd.addEventListener("click", addBenchmark);
-  if (bmDel) bmDel.addEventListener("click", deleteBenchmark);
+
+  // 任务类型切换：同样拦截 sentinel
+  const ttEl = $("#fTaskType");
+  if (ttEl) {
+    ttEl.addEventListener("change", () => {
+      const v = ttEl.value;
+      if (v === SENT_NEW) {
+        const created = addTaskType();
+        refreshTaskTypeSelect(created || ttEl.dataset.prev || "");
+      } else if (v === SENT_DEL) {
+        const target = ttEl.dataset.prev || "";
+        const ok = deleteTaskType(target);
+        refreshTaskTypeSelect(ok ? "" : target);
+      } else {
+        ttEl.dataset.prev = v;
+      }
+    });
+  }
 }
 
 function trimNum(n) {
@@ -3305,6 +3422,10 @@ function saveModal() {
   const start = fromLocalInput($("#fStart").value);
   const end = fromLocalInput($("#fEnd").value);
   const benchmark = $("#fBenchmark").value || "";
+  const taskType  = $("#fTaskType").value || "";
+  // 防御：若用户在 select 里点了 sentinel 但没换页就点保存，sentinel 值要忽略
+  const cleanBm = (benchmark === SENT_NEW || benchmark === SENT_DEL) ? "" : benchmark;
+  const cleanTt = (taskType === SENT_NEW || taskType === SENT_DEL) ? "" : taskType;
   if (!start || !end || end <= start) {
     alert("请检查起止时间：结束时间必须晚于开始时间。");
     return;
@@ -3320,20 +3441,22 @@ function saveModal() {
   }
   const color = $("#colorRow .color-chip.active")?.dataset.color || COLORS[0];
   // 把本次实际的「卡数 × 时长」回写到 benchmark 历史；只在选了 benchmark 时记录
-  if (benchmark) {
-    if (!state.benchmarks[benchmark]) state.benchmarks[benchmark] = {};
+  if (cleanBm) {
+    if (!state.benchmarks[cleanBm]) state.benchmarks[cleanBm] = {};
     const hours = (end - start) / HOUR_MS;
-    state.benchmarks[benchmark][gpus] = Math.round(hours * 100) / 100;
+    state.benchmarks[cleanBm][gpus] = Math.round(hours * 100) / 100;
   }
   if (editingId) {
     pushHistory("编辑任务");
     const t = state.tasks.find(x => x.id === editingId);
     Object.assign(t, {name, gpus, start, end, color});
-    if (benchmark) t.benchmark = benchmark; else delete t.benchmark;
+    if (cleanBm) t.benchmark = cleanBm; else delete t.benchmark;
+    if (cleanTt) t.taskType = cleanTt;  else delete t.taskType;
   } else {
     pushHistory("新建任务");
     const newTask = {id: uid(), name, gpus, start, end, color};
-    if (benchmark) newTask.benchmark = benchmark;
+    if (cleanBm) newTask.benchmark = cleanBm;
+    if (cleanTt) newTask.taskType  = cleanTt;
     state.tasks.push(newTask);
   }
   save();
@@ -3519,7 +3642,7 @@ $("#rangeEnd").addEventListener("change", (e) => {
 });
 
 $("#exportBtn").addEventListener("click", () => {
-  const data = JSON.stringify({quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt}, null, 2);
+  const data = JSON.stringify({quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt}, null, 2);
   const blob = new Blob([data], {type: "application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -3553,7 +3676,7 @@ $("#syncPushBtn").addEventListener("click", async () => {
   setSyncStatus("busy");
   try {
     if (!(await ensureRwPermission(sync.handle))) { setSyncStatus("err", "权限被撤销"); return; }
-    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, taskTypes: state.taskTypes, updatedAt: state.updatedAt || Date.now() });
     sync.lastPushAt = Date.now();
     setSyncStatus("ok");
     setStatus("已推送到云端文件");
@@ -3580,6 +3703,9 @@ $("#importFile").addEventListener("change", (e) => {
         state.tasks = data.tasks;
         if (data.benchmarks && typeof data.benchmarks === "object") {
           state.benchmarks = Object.assign({}, state.benchmarks, data.benchmarks);
+        }
+        if (Array.isArray(data.taskTypes) && data.taskTypes.length > 0) {
+          state.taskTypes = data.taskTypes.filter(x => typeof x === "string" && x.trim());
         }
         save(); render();
         setStatus(`已导入 ${state.tasks.length} 个任务（可撤回）`);
