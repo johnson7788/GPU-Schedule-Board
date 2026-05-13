@@ -26,7 +26,7 @@
     --tip-bg: #0d1117;
     --scroll-thumb: #2a313c;
     --scroll-thumb-hover: #3a424f;
-    --backdrop: rgba(0,0,0,0.6);
+    --backdrop: rgba(0,0,0,0.55);
     --chip-active: white;
     --over-stripe: rgba(248, 81, 73, 0.35);
   }
@@ -49,7 +49,7 @@
     --tip-bg: #24292f;
     --scroll-thumb: #c8cdd3;
     --scroll-thumb-hover: #a8aeb5;
-    --backdrop: rgba(120, 130, 145, 0.4);
+    --backdrop: rgba(110, 120, 135, 0.5);
     --chip-active: #1f2328;
     --over-stripe: rgba(207, 34, 46, 0.4);
   }
@@ -708,7 +708,7 @@
   .modal-backdrop {
     position: fixed; inset: 0; background: var(--backdrop);
     z-index: 1000; display: none; align-items: center; justify-content: center;
-    backdrop-filter: blur(2px);
+    /* 不要用 backdrop-filter: blur — 实时模糊会让背景画布在 modal 打开期间持续掉帧 */
   }
   .modal-backdrop.show { display: flex; }
   .modal {
@@ -815,7 +815,7 @@
   .reco-head label { color: var(--muted); font-size: 12px; }
   .reco-head .reco-meta { color: var(--muted); font-size: 11px; }
   .reco-head input { width: 70px; padding: 4px 8px; }
-  .reco-list { display: flex; flex-direction: column; gap: 4px; max-height: 145px; overflow-y: auto; }
+  .reco-list { display: flex; flex-direction: column; gap: 4px; max-height: 113px; overflow-y: auto; }
   .reco-item {
     padding: 6px 8px; border-radius: 4px;
     background: var(--bg); border: 1px solid var(--border);
@@ -827,6 +827,45 @@
   .reco-item .rt { color: var(--text); }
   .reco-item .rf { color: var(--ok); font-weight: 600; font-size: 11px; }
   .reco-empty { color: var(--muted); font-size: 11px; padding: 6px 0; }
+
+  /* ============== Benchmark row ============== */
+  .bm-row { display: flex; gap: 6px; align-items: center; }
+  .bm-select {
+    flex: 1; min-width: 0;
+    padding: 6px 8px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-size: 13px;
+  }
+  .bm-btn {
+    padding: 6px 10px; font-size: 12px;
+    white-space: nowrap;
+  }
+  .bm-btn.danger { color: var(--danger); border-color: var(--danger); }
+
+  /* 占用卡数下方：当前 benchmark 的历史卡数预设芯片 */
+  .bm-presets {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    margin-top: 6px; min-height: 0;
+  }
+  .bm-presets:empty { display: none; }
+  .bm-preset {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 4px 3px 8px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 12px; font-size: 11px; color: var(--text);
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    line-height: 1.4;
+  }
+  .bm-preset:hover { border-color: var(--accent); background: var(--row-hover); }
+  .bm-preset .bm-preset-h { color: var(--muted); font-size: 10px; }
+  .bm-preset .bm-preset-x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; border-radius: 50%;
+    color: var(--muted); font-size: 12px; line-height: 1;
+    cursor: pointer;
+  }
+  .bm-preset .bm-preset-x:hover { background: var(--danger); color: #fff; }
 
   /* ============== Context menu ============== */
   .ctx-menu {
@@ -1098,10 +1137,22 @@
         <input type="text" id="fName" placeholder="例：训练任务 v3" />
       </div>
       <div class="form-row">
+        <label>Benchmark <span class="bm-hint" style="color:var(--muted);font-weight:normal;font-size:11px">（可选，记录后会按卡数估算时长）</span></label>
+        <div class="bm-row">
+          <select id="fBenchmark" class="bm-select">
+            <option value="">— 不选 —</option>
+          </select>
+          <button type="button" id="bmAddBtn" class="ghost bm-btn" title="新建一个 Benchmark 名称">＋ 新建</button>
+          <button type="button" id="bmDelBtn" class="ghost bm-btn danger" title="删除当前选中的 Benchmark（含其历史时长记录）">🗑 删除</button>
+        </div>
+      </div>
+      <div class="form-row">
         <div class="row-2">
           <div class="sub-field">
             <label for="fGpus">占用卡数</label>
-            <input type="number" id="fGpus" min="1" value="8" />
+            <input type="number" id="fGpus" min="1" value="8" list="fGpusHistory" />
+            <datalist id="fGpusHistory"></datalist>
+            <div class="bm-presets" id="fGpusPresets"></div>
           </div>
           <div class="sub-field">
             <label for="fHours">需要时长(小时)</label>
@@ -1202,7 +1253,15 @@ const DAY_MS = 24 * HOUR_MS;
 
 const state = {
   quota: 64,
-  tasks: [],          // {id,name,start,end,gpus,color}
+  tasks: [],          // {id,name,start,end,gpus,color,benchmark?}
+  // Benchmark 历史时长记录: { "SuperGPQA": { 32: 43, 64: 36 }, ... }
+  // 单位：小时。每次保存任务时若选了 benchmark 则更新对应卡数的最近一次时长。
+  benchmarks: {
+    "AIME 2025": {},
+    "AIME 2026": {},
+    "GPQA-diamond": {},
+    "SuperGPQA": {},
+  },
   selectedId: null,
   selectedIds: [],    // 多选集合，selectedId 始终包含其中（作为「主选中」）
   pendingDeleteId: null, // id awaiting second-press confirmation
@@ -1248,7 +1307,8 @@ function save(opts) {
   // 只要发生过真实保存（非 silent / 非 demo seeding），就摘掉 demo 标签
   if (!opts || (!opts.silent && !opts.demo)) state.isDemo = false;
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt, isDemo: state.isDemo
+    quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt, isDemo: state.isDemo,
+    benchmarks: state.benchmarks,
   }));
   if (!opts || !opts.silent) scheduleCloudPush();
 }
@@ -1268,7 +1328,7 @@ let suppressRedoClear = false; // set true when pushing from undo() so we keep r
 let depthHideTimer = null;
 
 function snapshotState() {
-  return JSON.parse(JSON.stringify({ quota: state.quota, tasks: state.tasks }));
+  return JSON.parse(JSON.stringify({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks }));
 }
 function pushHistory(label) {
   historyStack.push({ label: label || "操作", snapshot: snapshotState() });
@@ -1293,6 +1353,7 @@ function undo() {
 
   state.quota = snapshot.quota;
   state.tasks = snapshot.tasks;
+  if (snapshot.benchmarks) state.benchmarks = snapshot.benchmarks;
   if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
   clearPendingDelete();
   save();
@@ -1315,6 +1376,7 @@ function redo() {
 
   state.quota = snapshot.quota;
   state.tasks = snapshot.tasks;
+  if (snapshot.benchmarks) state.benchmarks = snapshot.benchmarks;
   if (!state.tasks.find(t => t.id === state.selectedId)) state.selectedId = null;
   clearPendingDelete();
   save();
@@ -1477,6 +1539,10 @@ function load() {
     state.tasks = (data.tasks || []).map(t => ({...t}));
     state.updatedAt = data.updatedAt || 0;
     state.isDemo = !!data.isDemo;
+    if (data.benchmarks && typeof data.benchmarks === "object") {
+      // merge 默认 benchmark + 已存的，保证默认四个永远在
+      state.benchmarks = Object.assign({}, state.benchmarks, data.benchmarks);
+    }
     return true;
   } catch(e) { return false; }
 }
@@ -1698,7 +1764,7 @@ async function createSyncFile() {
     const ts = Date.now();
     state.updatedAt = ts;
     state.isDemo = false; // 用户确认推送 = 视为真实数据
-    await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: ts });
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: ts });
     sync.lastPushAt = Date.now();
     save({ silent: true });
     setSyncStatus("ok");
@@ -1761,6 +1827,9 @@ async function syncMergeFromFile(opts) {
         pushHistory("首次绑定·导入云端覆盖本地");
         state.quota = remote.quota ?? state.quota;
         state.tasks = remote.tasks;
+        if (remote.benchmarks && typeof remote.benchmarks === "object") {
+          state.benchmarks = Object.assign({}, state.benchmarks, remote.benchmarks);
+        }
         state.updatedAt = remoteTs || Date.now();
         state.isDemo = false; // 已被真实数据替换
         save({ silent: true });
@@ -1795,7 +1864,7 @@ async function syncMergeFromFile(opts) {
           setStatus("已取消绑定（未写入文件）");
           return;
         }
-        await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+        await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
         sync.lastPushAt = Date.now();
       }
       setSyncStatus("ok");
@@ -1809,13 +1878,16 @@ async function syncMergeFromFile(opts) {
         setSyncStatus("ok");
         return;
       }
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
       sync.lastPushAt = Date.now();
     } else if (remoteTs > localTs) {
       // remote wins — pull
       pushHistory("云端更新·覆盖本地");
       state.quota = remote.quota ?? state.quota;
       state.tasks = remote.tasks;
+      if (remote.benchmarks && typeof remote.benchmarks === "object") {
+        state.benchmarks = Object.assign({}, state.benchmarks, remote.benchmarks);
+      }
       state.updatedAt = remoteTs;
       // 'silent' so we don't bump updatedAt or re-push
       save({ silent: true });
@@ -1824,7 +1896,7 @@ async function syncMergeFromFile(opts) {
       setStatus(`已从云端拉取（${state.tasks.length} 任务）`);
     } else if (localTs > remoteTs) {
       // local wins — push
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt });
       sync.lastPushAt = Date.now();
     } else {
       // same timestamp — nothing to do
@@ -1857,7 +1929,7 @@ function scheduleCloudPush() {
         await syncMergeFromFile({});
         return;
       }
-      await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt });
+      await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt });
       sync.lastPushAt = Date.now();
       setSyncStatus("ok");
     } catch (err) {
@@ -2884,12 +2956,127 @@ function attachBarHandlers(bar, task) {
 // ============== Modal ==============
 let editingId = null;
 
+// ----- Benchmark helpers -----
+function getBenchmarkNames() {
+  return Object.keys(state.benchmarks || {}).sort((a, b) => a.localeCompare(b, "zh"));
+}
+
+function refreshBenchmarkSelect(selectedName) {
+  const sel = $("#fBenchmark");
+  if (!sel) return;
+  const names = getBenchmarkNames();
+  sel.innerHTML = `<option value="">— 不选 —</option>` +
+    names.map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join("");
+  sel.value = selectedName && names.includes(selectedName) ? selectedName : "";
+}
+
+function refreshGpusHistory() {
+  // 把当前选中 benchmark 历史卡数填充到 datalist；未选则清空
+  const dl = $("#fGpusHistory");
+  if (!dl) return;
+  const bm = $("#fBenchmark").value;
+  dl.innerHTML = "";
+  if (!bm || !state.benchmarks[bm]) return;
+  const cards = Object.keys(state.benchmarks[bm])
+    .map(n => parseInt(n, 10))
+    .filter(n => isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  for (const c of cards) {
+    const opt = document.createElement("option");
+    opt.value = String(c);
+    opt.label = `${c} 卡（历史 ${trimNum(state.benchmarks[bm][c])}h）`;
+    dl.appendChild(opt);
+  }
+}
+
+function refreshGpusPresets() {
+  // 占用卡数下方的预设芯片：[32卡·43h ✕] [64卡·36h ✕]
+  // 整片可点 = 一键填卡数+应用时长；右侧 ✕ = 删除该条历史记录
+  const wrap = $("#fGpusPresets");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const bm = $("#fBenchmark").value;
+  if (!bm || !state.benchmarks[bm]) return;
+  const cards = Object.keys(state.benchmarks[bm])
+    .map(n => parseInt(n, 10))
+    .filter(n => isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  for (const c of cards) {
+    const hours = state.benchmarks[bm][c];
+    const chip = document.createElement("div");
+    chip.className = "bm-preset";
+    chip.title = `应用：${c} 卡 × ${trimNum(hours)} 小时`;
+    chip.innerHTML = `<span class="bm-preset-c">${c} 卡</span><span class="bm-preset-h">·${trimNum(hours)}h</span><span class="bm-preset-x" title="删除此预设">✕</span>`;
+    chip.addEventListener("click", (ev) => {
+      if (ev.target.closest(".bm-preset-x")) return; // ✕ 自己处理
+      // 一键填卡数 + 应用时长，触发既有联动
+      $("#fGpus").value = String(c);
+      $("#fGpus").dispatchEvent(new Event("input", { bubbles: true }));
+      $("#fHours").value = trimNum(hours);
+      $("#fHours").dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    chip.querySelector(".bm-preset-x").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!confirm(`删除预设：${bm} × ${c} 卡（${trimNum(hours)}h）？`)) return;
+      pushHistory(`删除预设 ${bm}×${c}卡`);
+      delete state.benchmarks[bm][c];
+      save();
+      refreshGpusHistory();
+      refreshGpusPresets();
+    });
+    wrap.appendChild(chip);
+  }
+}
+
+function addBenchmark() {
+  const name = (prompt("新建 Benchmark 名称（例如：MMLU、HumanEval）：") || "").trim();
+  if (!name) return;
+  if (state.benchmarks[name]) {
+    alert(`「${name}」已存在`);
+    refreshBenchmarkSelect(name);
+    refreshGpusHistory();
+    refreshGpusPresets();
+    return;
+  }
+  pushHistory(`新建 Benchmark「${name}」`);
+  state.benchmarks[name] = {};
+  save();
+  refreshBenchmarkSelect(name);
+  refreshGpusHistory();
+  refreshGpusPresets();
+  setStatus(`已新建 Benchmark：${name}`);
+}
+
+function deleteBenchmark() {
+  const cur = $("#fBenchmark").value;
+  if (!cur) {
+    alert("请先在下拉框选中一个 Benchmark 再删除。");
+    return;
+  }
+  const records = Object.keys(state.benchmarks[cur] || {}).length;
+  if (!confirm(`删除 Benchmark「${cur}」？\n${records ? `将一并清除 ${records} 条历史卡数→时长记录。` : ""}\n（已绑定此 Benchmark 的任务不会被删除，仅清空其 benchmark 字段。）`)) return;
+  pushHistory(`删除 Benchmark「${cur}」`);
+  delete state.benchmarks[cur];
+  for (const t of state.tasks) {
+    if (t.benchmark === cur) delete t.benchmark;
+  }
+  save();
+  refreshBenchmarkSelect("");
+  refreshGpusHistory();
+  refreshGpusPresets();
+  setStatus(`已删除 Benchmark：${cur}`);
+}
+
 function openModal(id) {
   editingId = id || null;
   const t = id ? state.tasks.find(x => x.id === id) : null;
   $("#modalTitle").textContent = t ? "编辑任务" : "新建任务";
   $("#fName").value = t ? t.name : "";
   $("#fGpus").value = t ? t.gpus : 8;
+  // Benchmark
+  refreshBenchmarkSelect(t ? (t.benchmark || "") : "");
+  refreshGpusHistory();
+  refreshGpusPresets();
   const now = Date.now();
   // 默认开始时间 = 当前时间（向上对齐到 1 分钟，避免出现秒级抖动），而不是取整到整点
   const def_s = t ? t.start : Math.ceil(now / 60000) * 60000;
@@ -2992,12 +3179,25 @@ function attachModalLinks() {
   endEl.addEventListener("input", onEndChange);
   endEl.addEventListener("change", onEndChange);
 
-  // gpus → 刷新推荐 + 警告
+  // gpus → 刷新推荐 + 警告（预设芯片不依赖卡数输入，无需重渲染）
   gpusEl.addEventListener("input", () => {
     updateWarnBanner();
     updateRecoMeta();
     scheduleRecoRefresh();
   });
+
+  // benchmark 切换 → 重置 datalist + 重算历史时长提示
+  const bmEl = $("#fBenchmark");
+  if (bmEl) {
+    bmEl.addEventListener("change", () => {
+      refreshGpusHistory();
+      refreshGpusPresets();
+    });
+  }
+  const bmAdd = $("#bmAddBtn");
+  const bmDel = $("#bmDelBtn");
+  if (bmAdd) bmAdd.addEventListener("click", addBenchmark);
+  if (bmDel) bmDel.addEventListener("click", deleteBenchmark);
 }
 
 function trimNum(n) {
@@ -3104,6 +3304,7 @@ function saveModal() {
   const gpus = Math.max(1, parseInt($("#fGpus").value, 10) || 1);
   const start = fromLocalInput($("#fStart").value);
   const end = fromLocalInput($("#fEnd").value);
+  const benchmark = $("#fBenchmark").value || "";
   if (!start || !end || end <= start) {
     alert("请检查起止时间：结束时间必须晚于开始时间。");
     return;
@@ -3118,13 +3319,22 @@ function saveModal() {
     return;
   }
   const color = $("#colorRow .color-chip.active")?.dataset.color || COLORS[0];
+  // 把本次实际的「卡数 × 时长」回写到 benchmark 历史；只在选了 benchmark 时记录
+  if (benchmark) {
+    if (!state.benchmarks[benchmark]) state.benchmarks[benchmark] = {};
+    const hours = (end - start) / HOUR_MS;
+    state.benchmarks[benchmark][gpus] = Math.round(hours * 100) / 100;
+  }
   if (editingId) {
     pushHistory("编辑任务");
     const t = state.tasks.find(x => x.id === editingId);
     Object.assign(t, {name, gpus, start, end, color});
+    if (benchmark) t.benchmark = benchmark; else delete t.benchmark;
   } else {
     pushHistory("新建任务");
-    state.tasks.push({id: uid(), name, gpus, start, end, color});
+    const newTask = {id: uid(), name, gpus, start, end, color};
+    if (benchmark) newTask.benchmark = benchmark;
+    state.tasks.push(newTask);
   }
   save();
   closeModal();
@@ -3309,7 +3519,7 @@ $("#rangeEnd").addEventListener("change", (e) => {
 });
 
 $("#exportBtn").addEventListener("click", () => {
-  const data = JSON.stringify({quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt}, null, 2);
+  const data = JSON.stringify({quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt}, null, 2);
   const blob = new Blob([data], {type: "application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -3343,7 +3553,7 @@ $("#syncPushBtn").addEventListener("click", async () => {
   setSyncStatus("busy");
   try {
     if (!(await ensureRwPermission(sync.handle))) { setSyncStatus("err", "权限被撤销"); return; }
-    await writeToHandle({ quota: state.quota, tasks: state.tasks, updatedAt: state.updatedAt || Date.now() });
+    await writeToHandle({ quota: state.quota, tasks: state.tasks, benchmarks: state.benchmarks, updatedAt: state.updatedAt || Date.now() });
     sync.lastPushAt = Date.now();
     setSyncStatus("ok");
     setStatus("已推送到云端文件");
@@ -3368,6 +3578,9 @@ $("#importFile").addEventListener("change", (e) => {
         pushHistory("导入数据");
         state.quota = data.quota ?? state.quota;
         state.tasks = data.tasks;
+        if (data.benchmarks && typeof data.benchmarks === "object") {
+          state.benchmarks = Object.assign({}, state.benchmarks, data.benchmarks);
+        }
         save(); render();
         setStatus(`已导入 ${state.tasks.length} 个任务（可撤回）`);
       }
