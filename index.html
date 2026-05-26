@@ -477,6 +477,24 @@
   .tip-toggle.tucked { transform: translateY(0); }
   .tip-toggle.hidden-by-box { display: none; }
 
+  /* 右下角轻量 toast，独立于 tip-box，用于操作反馈（不可关闭，自动消失） */
+  .save-toast {
+    position: fixed; right: 16px; bottom: 48px; z-index: 1600;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid #2ea043;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    padding: 9px 14px;
+    color: var(--text); font-size: 12.5px; line-height: 1.5;
+    display: flex; align-items: center; gap: 8px;
+    pointer-events: none;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity .18s ease, transform .18s ease;
+  }
+  .save-toast.show { opacity: 1; transform: translateY(0); }
+  .save-toast .st-mark { color: #2ea043; font-weight: 600; }
+
   .canvas-wrap {
     overflow: auto; position: relative;
     background:
@@ -1319,6 +1337,11 @@ const fmtDur = (ms) => {
   if (ms < HOUR_MS) return `${Math.round(ms / 60000)} 分钟`;
   if (ms < DAY_MS) return `${(ms / HOUR_MS).toFixed(1)} 小时`;
   return `${(ms / DAY_MS).toFixed(1)} 天`;
+};
+// 拖动 / 时间轴指引专用：始终以小时为单位，不切到天
+const fmtDurHoursOnly = (ms) => {
+  if (ms < HOUR_MS) return `${Math.round(ms / 60000)} 分钟`;
+  return `${(ms / HOUR_MS).toFixed(1)} 小时`;
 };
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -2873,7 +2896,7 @@ function updateDragGuide(task, mode) {
   dLbl.style.left = ((xs + xe) / 2) + "px";
   sLbl.textContent = "起 " + fmtDateTime(task.start);
   eLbl.textContent = "止 " + fmtDateTime(task.end);
-  dLbl.textContent = fmtDur(task.end - task.start);
+  dLbl.textContent = fmtDurHoursOnly(task.end - task.start);
   // resize-l: emphasize start; resize-r: emphasize end; move: both equal
   sLine.style.opacity = mode === "resize-r" ? "0.45" : "1";
   eLine.style.opacity = mode === "resize-l" ? "0.45" : "1";
@@ -3617,6 +3640,47 @@ function hideTip() { tooltip.classList.remove("show"); }
 
 function setStatus(s) { $("#statusText").textContent = s; }
 
+// 右下角轻量 toast：独立于 tip-box，用于操作反馈（如 ⌘+S 保存提示）
+let _saveToastEl = null;
+let _saveToastTimer = null;
+function showSaveToast(text) {
+  if (!_saveToastEl) {
+    _saveToastEl = document.createElement("div");
+    _saveToastEl.className = "save-toast";
+    document.body.appendChild(_saveToastEl);
+  }
+  _saveToastEl.innerHTML = `<span class="st-mark">✓</span><span>${escapeHTML(text)}</span>`;
+  // 强制 reflow 让 transition 生效
+  void _saveToastEl.offsetWidth;
+  _saveToastEl.classList.add("show");
+  if (_saveToastTimer) clearTimeout(_saveToastTimer);
+  _saveToastTimer = setTimeout(() => {
+    if (_saveToastEl) _saveToastEl.classList.remove("show");
+  }, 1800);
+}
+
+// 把当前所有任务的 (benchmark, taskType, gpus) → hours 全量回写到 state.benchmarks 历史，
+// 然后触发一次 save（含云端推送）。⌘/Ctrl+S 在主页面（无 modal）时调用。
+function saveAllBenchmarksFromTasks() {
+  let written = 0;
+  for (const t of state.tasks) {
+    const bm = t.benchmark;
+    if (!bm) continue;
+    const tt = t.taskType || "";
+    const dur = (t.end - t.start);
+    if (!(dur > 0) || !(t.gpus > 0)) continue;
+    const bucket = bmEnsureBucket(bm, tt);
+    const hours = dur / HOUR_MS;
+    bucket[t.gpus] = Math.round(hours * 100) / 100;
+    written++;
+  }
+  save(); // 会触发 scheduleCloudPush
+  showSaveToast("已保存当前资源时间配置");
+  setStatus(written
+    ? `已保存当前资源时间配置（${written} 条）`
+    : "已保存当前资源时间配置");
+}
+
 function escapeHTML(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
@@ -3848,6 +3912,18 @@ $("#clearBtn").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (e) => {
+  // 全局：Cmd/Ctrl + S 保存当前资源时间配置（modal 打开时等同于点保存）
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "s" || e.key === "S")) {
+    e.preventDefault();
+    if ($("#modal").classList.contains("show")) {
+      // IME 组词阶段不触发
+      if (e.isComposing || e.keyCode === 229) return;
+      saveModal();
+    } else {
+      saveAllBenchmarksFromTasks();
+    }
+    return;
+  }
   if ($("#modal").classList.contains("show")) {
     if (e.key === "Escape") closeModal();
     else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
