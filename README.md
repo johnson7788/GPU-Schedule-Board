@@ -27,6 +27,17 @@ python3 -m http.server 8080
 # 访问 http://localhost:8080
 ```
 
+## 🐳 容器启动
+
+```bash
+# 构建镜像
+docker build -t gpu-schedule-board .
+
+# 运行（映射到 8080 端口）
+docker run -d -p 8080:80 --name gpu-board gpu-schedule-board
+# 访问 http://localhost:8080
+```
+
 ## 📦 部署到 GitHub Pages
 
 ```bash
